@@ -8785,7 +8785,62 @@ run(function()
 		end
 	end
 	
-	Killaura = vape.Categories.Blatant:CreateModule({
+	
+	-- Safe StatusEffectUtil.isActive (Elevate bedwars table often lacks StatusEffectUtil)
+	do
+		local seUtil = nil
+		local function resolveStatusEffectUtil()
+			if seUtil ~= nil then return seUtil end
+			local paths = {
+				function()
+					return require(game:GetService("ReplicatedStorage").TS.entity["status-effect"]["status-effect-util"]).StatusEffectUtil
+				end,
+				function()
+					return require(game:GetService("ReplicatedStorage").TS["status-effect"]["status-effect-util"]).StatusEffectUtil
+				end,
+				function()
+					return require(game:GetService("ReplicatedStorage").TS.entity["status-effect-util"]).StatusEffectUtil
+				end,
+			}
+			for _, loader in ipairs(paths) do
+				local ok, mod = pcall(loader)
+				if ok and type(mod) == "table" then
+					seUtil = mod
+					return seUtil
+				end
+			end
+			seUtil = false
+			return nil
+		end
+		function __elevateStatusActive(character, effect)
+			if not character then return false end
+			local util = resolveStatusEffectUtil()
+			if util then
+				local fn = util.isActive or util.IsActive
+				if type(fn) == "function" then
+					local ok, res = pcall(fn, util, character, effect)
+					if ok then return res and true or false end
+				end
+			end
+			-- attribute fallbacks
+			local ok2, res2 = pcall(function()
+				if effect == "frozen" then
+					local untilt = character:GetAttribute("StunnedUntilTime")
+					if untilt and untilt > workspace:GetServerTimeNow() then return true end
+					if character:FindFirstChild("elk") then return true end
+				end
+				if effect == "fury_potion" then
+					if character:GetAttribute("Fury") or character:GetAttribute("fury_potion") then return true end
+				end
+				local key = tostring(effect or "")
+				if character:GetAttribute(key) or character:GetAttribute("StatusEffect_" .. key) then return true end
+				return false
+			end)
+			return ok2 and res2 or false
+		end
+	end
+
+Killaura = vape.Categories.Blatant:CreateModule({
 		Name = "Killaura",
 		Function = function(Callback: boolean)
 			if Callback then
@@ -8794,7 +8849,7 @@ run(function()
 					oldAura:Toggle()
 				end
 
-				local PreviousSwing = bedwars.SwordController.playSwordEffect
+				local PreviousSwing = bedwars.SwordController and bedwars.SwordController.playSwordEffect
 				local Current = {}
 				local Hook
 				Session = Current
@@ -9005,23 +9060,28 @@ run(function()
 						if not Blocked and AFKCheck.Enabled and isAfk() then
 							Blocked = true
 						end
-						if not Blocked and GUI.Enabled and bedwars.AppController:isLayerOpen(bedwars.UILayers.MAIN) then
+						if not Blocked and GUI.Enabled then
+							local open = false
+							pcall(function()
+								open = bedwars.AppController and bedwars.AppController:isLayerOpen(bedwars.UILayers.MAIN)
+							end)
+							if open then
 							Blocked = true
 						end
 						if not Blocked and Attackable.Enabled then
 							Blocked = not Entity.isAlive
 								or (LocalPlayer.Character:GetAttribute("StunnedUntilTime") or 0) > workspace:GetServerTimeNow()
 								or LocalPlayer.Character:FindFirstChild("elk") ~= nil
-								or bedwars.StatusEffectUtil:isActive(LocalPlayer.Character, "frozen")
+								or __elevateStatusActive(LocalPlayer.Character, "frozen")
 						end
 	
 						if not Blocked then
 							Sword = Limit.Enabled and store.hand or store.tools.sword
 							if not Sword or not Sword.tool then
 								Sword = nil
-							elseif Limit.Enabled and (store.hand.toolType ~= "sword" or bedwars.DaoController.chargingMaid) then
+							elseif Limit.Enabled and (store.hand.toolType ~= "sword" or (bedwars.DaoController and bedwars.DaoController.chargingMaid)) then
 								Sword = nil
-							elseif LegitAura.Enabled and (tick() - bedwars.SwordController.lastSwing) > 0.2 then
+							elseif LegitAura.Enabled and bedwars.SwordController and (tick() - (bedwars.SwordController.lastSwing or 0)) > 0.2 then
 								Sword = nil
 							else
 								SwordMeta = bedwars.ItemMeta[Sword.tool.Name]
@@ -9036,11 +9096,11 @@ run(function()
 							if not Entity.isAlive or (os.clock() - ScanClock) >= ScanInterval then
 								ScanSettings.Origin = Root.Position
 								ScanSettings.Range = SwingRange.Value
-								ScanSettings.Wallcheck = Targets.Walls.Enabled or nil
+								ScanSettings.Wallcheck = (Targets.Walls and Targets.Walls.Enabled) or nil
 								ScanSettings.Part = "RootPart"
 								ScanSettings.Players = Targets.Players.Enabled
 								ScanSettings.NPCs = Targets.NPCs.Enabled
-								ScanSettings.Priority = Targets.Priority.Value
+								ScanSettings.Priority = Targets.Priority and Targets.Priority.Value or nil
 								ScanSettings.Sort = sortmethods[Sort.Value]
 								Entities = Entity.AllPosition(ScanSettings)
 								ScanClock = os.clock()
@@ -9053,7 +9113,7 @@ run(function()
 								UpdateSelfReference(os.clock(), SendPosition)
 								local LocalFacing: Vector3 = Root.CFrame.LookVector * FlatScale
 								local DisplayName: string = SwordMeta and SwordMeta.displayName or ""
-								local FuryMultiplier: number = bedwars.StatusEffectUtil:isActive(LocalPlayer.Character, "fury_potion") and FuryScale or 1
+								local FuryMultiplier: number = __elevateStatusActive(LocalPlayer.Character, "fury_potion") and FuryScale or 1
 								local SwordSpeed: number = SwordMeta and SwordMeta.sword and SwordMeta.sword.attackSpeed or 0.3
 								local Spacing, SpeedScale, GapMin, AttackCooldown, Stock = SwordTiming.Calculate(SwordSpeed, FuryMultiplier, HighHitreg.Enabled, HitBudget)
 								local Quantized: boolean = Stock and HighHitreg.Enabled and Hitreg.Value ~= "Burst" and HitregTiming.AlignFrames and FrameTime > 1 / 30

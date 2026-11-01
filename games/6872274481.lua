@@ -134,111 +134,101 @@ local color = vape.Libraries.color
 local whitelist = { get = function() return nil, true end, tag = function() return '' end, customtags = {} }
 local prediction = vape.Libraries.prediction
 
-	local function __elevateEnsureModuleAPI(mod)
-		if type(mod) ~= "table" or mod.__elevateAPI then return mod end
-		mod.__elevateAPI = true
-		if type(mod.CreateGroup) ~= "function" and type(mod.CreateToggle) == "function" then
-			mod.CreateGroup = function(self, opts)
-				opts = opts or {}
-				local g = self:CreateToggle({
-					Name = opts.Name,
-					Default = opts.Default,
-					Tooltip = opts.Tooltip,
-					Function = opts.Function,
-				})
-				-- children bind to parent module (never recurse CreateGroup on g)
-				g.CreateToggle = function(_, o)
-					o = o or {}
-					o.Darker = true
-					return self:CreateToggle(o)
-				end
-				g.CreateSlider = function(_, o)
-					o = o or {}
-					o.Darker = true
-					return self:CreateSlider(o)
-				end
-				g.CreateDropdown = function(_, o)
-					o = o or {}
-					o.Darker = true
-					return self:CreateDropdown(o)
-				end
-				g.CreateTextList = function(_, o)
-					o = o or {}
-					o.Darker = true
-					if type(self.CreateTextList) == "function" then return self:CreateTextList(o) end
-					return { ListEnabled = o.Default or {}, Object = {Visible = true}, Name = o.Name }
-				end
-				g.CreateMultiDropdown = function(_, o)
-					o = o or {}
-					o.Darker = true
-					if type(self.CreateMultiDropdown) == "function" then return self:CreateMultiDropdown(o) end
-					local en = {}
-					for _, v in ipairs(o.Default or {}) do en[v] = true end
-					return { ListEnabled = o.Default or {}, Has = function(_, n) return en[n] == true end, Object = {Visible = true} }
-				end
-				g.CreateTextBox = function(_, o)
-					o = o or {}
-					if type(self.CreateTextBox) == "function" then return self:CreateTextBox(o) end
-					return { Value = o.Default or "", Object = {Visible = true}, Name = o.Name }
-				end
-				g.CreateTwoSlider = function(_, o)
-					o = o or {}
-					if type(self.CreateTwoSlider) == "function" then return self:CreateTwoSlider(o) end
-					local s = self:CreateSlider({
-						Name = o.Name or "Range",
-						Min = o.Min or 0,
-						Max = o.Max or 1000,
-						Default = o.DefaultMax or 0,
-						Tooltip = o.Tooltip,
-						Darker = true,
-					})
-					s.MinValue = o.DefaultMin or 0
-					s.MaxValue = s.Value
-					return s
-				end
-				g.CreateColorSlider = function(_, o)
-					if type(self.CreateColorSlider) == "function" then return self:CreateColorSlider(o) end
-					return { Hue = 0, Sat = 1, Value = 1, Opacity = 1, Object = {Visible = true} }
-				end
-				return g
+-- Elevate API polyfill for UI builds missing CreateGroup / MultiDropdown / TextBox
+local function __elevateEnsureModuleAPI(mod)
+	if type(mod) ~= "table" or mod.__elevateAPI then return mod end
+	mod.__elevateAPI = true
+	if type(mod.CreateGroup) ~= "function" and type(mod.CreateToggle) == "function" then
+		mod.CreateGroup = function(self, opts)
+			opts = opts or {}
+			local g = self:CreateToggle({
+				Name = opts.Name,
+				Default = opts.Default,
+				Tooltip = opts.Tooltip,
+				Function = opts.Function,
+			})
+			g.CreateToggle = function(_, o)
+				o = o or {}; o.Darker = true
+				return self:CreateToggle(o)
 			end
-		end
-		if type(mod.CreateMultiDropdown) ~= "function" then
-			mod.CreateMultiDropdown = function(_, o)
-				o = o or {}
+			g.CreateSlider = function(_, o)
+				o = o or {}; o.Darker = true
+				return self:CreateSlider(o)
+			end
+			g.CreateDropdown = function(_, o)
+				o = o or {}; o.Darker = true
+				return self:CreateDropdown(o)
+			end
+			g.CreateTextList = function(_, o)
+				o = o or {}; o.Darker = true
+				if type(self.CreateTextList) == "function" then return self:CreateTextList(o) end
+				return { ListEnabled = o.Default or {}, Object = {Visible = true}, Name = o.Name }
+			end
+			g.CreateMultiDropdown = function(_, o)
+				o = o or {}; o.Darker = true
+				if type(self.CreateMultiDropdown) == "function" then return self:CreateMultiDropdown(o) end
 				local en = {}
 				for _, v in ipairs(o.Default or {}) do en[v] = true end
 				return { ListEnabled = o.Default or {}, Has = function(_, n) return en[n] == true end, Object = {Visible = true} }
 			end
-		end
-		if type(mod.CreateTextBox) ~= "function" then
-			mod.CreateTextBox = function(_, o)
+			g.CreateTextBox = function(_, o)
 				o = o or {}
+				if type(self.CreateTextBox) == "function" then return self:CreateTextBox(o) end
 				return { Value = o.Default or "", Object = {Visible = true}, Name = o.Name }
 			end
-		end
-		if type(mod.CreateTwoSlider) ~= "function" then
-			mod.CreateTwoSlider = function(self, o)
+			g.CreateTwoSlider = function(_, o)
 				o = o or {}
-				if type(self.CreateSlider) == "function" then
-					local s = self:CreateSlider({
-						Name = o.Name or "Range", Min = o.Min or 0, Max = o.Max or 1000,
-						Default = o.DefaultMax or 0, Tooltip = o.Tooltip,
-					})
-					s.MinValue, s.MaxValue = o.DefaultMin or 0, s.Value
-					return s
-				end
-				return { MinValue = 0, MaxValue = 0, Value = 0, Object = {Visible = true} }
+				if type(self.CreateTwoSlider) == "function" then return self:CreateTwoSlider(o) end
+				local s = self:CreateSlider({
+					Name = o.Name or "Range", Min = o.Min or 0, Max = o.Max or 1000,
+					Default = o.DefaultMax or 0, Tooltip = o.Tooltip, Darker = true,
+				})
+				s.MinValue, s.MaxValue = o.DefaultMin or 0, s.Value
+				return s
 			end
-		end
-		if type(mod.CreateTextList) ~= "function" then
-			mod.CreateTextList = function(_, o)
-				o = o or {}
-				return { ListEnabled = o.Default or {}, Object = {Visible = true}, Name = o.Name }
+			g.CreateColorSlider = function(_, o)
+				if type(self.CreateColorSlider) == "function" then return self:CreateColorSlider(o) end
+				return { Hue = 0, Sat = 1, Value = 1, Opacity = 1, Object = {Visible = true} }
 			end
+			return g
 		end
-		return mod
 	end
+	if type(mod.CreateMultiDropdown) ~= "function" then
+		mod.CreateMultiDropdown = function(_, o)
+			o = o or {}
+			local en = {}
+			for _, v in ipairs(o.Default or {}) do en[v] = true end
+			return { ListEnabled = o.Default or {}, Has = function(_, n) return en[n] == true end, Object = {Visible = true} }
+		end
+	end
+	if type(mod.CreateTextBox) ~= "function" then
+		mod.CreateTextBox = function(_, o)
+			o = o or {}
+			return { Value = o.Default or "", Object = {Visible = true}, Name = o.Name }
+		end
+	end
+	if type(mod.CreateTwoSlider) ~= "function" then
+		mod.CreateTwoSlider = function(self, o)
+			o = o or {}
+			if type(self.CreateSlider) == "function" then
+				local s = self:CreateSlider({
+					Name = o.Name or "Range", Min = o.Min or 0, Max = o.Max or 1000,
+					Default = o.DefaultMax or 0, Tooltip = o.Tooltip,
+				})
+				s.MinValue, s.MaxValue = o.DefaultMin or 0, s.Value
+				return s
+			end
+			return { MinValue = 0, MaxValue = 0, Value = 0, Object = {Visible = true} }
+		end
+	end
+	if type(mod.CreateTextList) ~= "function" then
+		mod.CreateTextList = function(_, o)
+			o = o or {}
+			return { ListEnabled = o.Default or {}, Object = {Visible = true}, Name = o.Name }
+		end
+	end
+	return mod
+end
 
 local getfontsize = vape.Libraries.getfontsize
 local getcustomasset = vape.Libraries.getcustomasset
@@ -7525,13 +7515,23 @@ run(function()
 	local TargetInfo = targetinfo
 	local getTinkerMount = bedwars.getTinkerMount or function() return nil end
 	local watchProjectile = bedwars.watchProjectile or function() end
-	local SwordTiming = (vape.Libraries and vape.Libraries.swordtiming) or {
-		ArrivalFloor = 0.05, HitFloor = 0.11, GapFloor = 0.11, HighSpacing = 0.18,
-		Calculate = function(speed, fury, high, budget)
-			speed = speed or 0.3
-			return math.max(speed, 0.11), 1, 0.11, nil, not not high
-		end,
-	}
+	local SwordTiming = (vape.Libraries and vape.Libraries.swordtiming) or {}
+	-- consistent spacing fallback (better than raw Aether defaults when library missing)
+	if type(SwordTiming.Calculate) ~= "function" then
+		SwordTiming.ArrivalFloor = SwordTiming.ArrivalFloor or 0.04
+		SwordTiming.HitFloor = SwordTiming.HitFloor or 0.095
+		SwordTiming.GapFloor = SwordTiming.GapFloor or 0.09
+		SwordTiming.HighSpacing = SwordTiming.HighSpacing or 0.14
+		SwordTiming.Calculate = function(speed, fury, high, budget)
+			speed = tonumber(speed) or 0.3
+			fury = tonumber(fury) or 1
+			budget = tonumber(budget) or 0.2
+			local base = math.max(speed / math.max(fury, 0.5), high and 0.09 or 0.11)
+			base = math.max(base, SwordTiming.HitFloor or 0.095)
+			local gap = math.max(base * 0.92, SwordTiming.GapFloor or 0.09)
+			return base, 1, gap, nil, not not high
+		end
+	end
 	local Killaura
 	local Targets
 	local Sort
@@ -7615,24 +7615,84 @@ run(function()
 	local ArmWrist: Motor6D?
 	local ArcCheck: RaycastParams = RaycastParams.new()
 	ArcCheck.FilterType = Enum.RaycastFilterType.Exclude
-	local AttackRemote = {FireServer = function() end, GetRateLimit = function() return 8 end}
-	local SwordSwingMiss = {FireServer = function() end}
-	local ProjectileRemote = {FireServer = function() end, GetRateLimit = function() return 8 end}
-	pcall(function()
-		if bedwars.Handler and bedwars.Handler.Get then
-			ProjectileRemote = bedwars.Handler:Get("ProjectileFire") or ProjectileRemote
+	local function makeStubRemote()
+		return {
+			FireServer = function() end,
+			SendToServer = function() end,
+			Fire = function() end,
+			GetRateLimit = function() return 8 end,
+		}
+	end
+	local function resolveRemote(names)
+		for _, name in ipairs(names) do
+			-- Handler path (Aether-style)
+			local ok, r = pcall(function()
+				if bedwars.Handler and bedwars.Handler.Get then
+					return bedwars.Handler:Get(name)
+				end
+			end)
+			if ok and r and (type(r.Fire) == "function" or type(r.FireServer) == "function" or type(r.SendToServer) == "function") then
+				if type(r.GetRateLimit) ~= "function" then r.GetRateLimit = function() return 8 end end
+				if type(r.Fire) ~= "function" then
+					r.Fire = function(_, a, b)
+						if r.SendToServer then return r:SendToServer(b or a) end
+						if r.FireServer then return r:FireServer(b or a) end
+					end
+				end
+				return r
+			end
+			-- Client remote name
+			ok, r = pcall(function()
+				if bedwars.Client then return bedwars.Client:Get(name) end
+			end)
+			if ok and r then
+				if type(r.GetRateLimit) ~= "function" then r.GetRateLimit = function() return 8 end end
+				if type(r.Fire) ~= "function" then
+					r.Fire = function(_, a, b)
+						local payload = b or a
+						if r.SendToServer then return r:SendToServer(payload) end
+						if r.FireServer then return r:FireServer(payload) end
+						if r.CallServer then return r:CallServer(payload) end
+					end
+				end
+				return r
+			end
+			-- NetManaged
+			ok, r = pcall(function()
+				local net = replicatedStorage.rbxts_include.node_modules["@rbxts"].net.out._NetManaged
+				return net and (net:FindFirstChild(name) or (name == "SwordHit" and net:FindFirstChild("AttackEntity")))
+			end)
+			if ok and r then
+				return {
+					FireServer = function(_, ...) return r:FireServer(...) end,
+					SendToServer = function(_, ...) return r:FireServer(...) end,
+					Fire = function(_, a, b)
+						local payload = b or a
+						return r:FireServer(payload)
+					end,
+					GetRateLimit = function() return 8 end,
+				}
+			end
 		end
+		return makeStubRemote()
+	end
+	local AttackRemote = makeStubRemote()
+	local SwordSwingMiss = makeStubRemote()
+	local ProjectileRemote = makeStubRemote()
+	pcall(function()
+		ProjectileRemote = resolveRemote({"ProjectileFire", "FireProjectile"}) or ProjectileRemote
 	end)
 	local FastHitPending, LastShot = nil, 0
 	local ArrivalFloor: number = SwordTiming.ArrivalFloor
 	local HitBudget, HitFloor, GapFloor = 0.2, SwordTiming.HitFloor, SwordTiming.GapFloor
 	local CleanFloor: number = SwordTiming.HighSpacing
-	local TargetLag: number = 0.08
-	local SelfLag: number = 0.06
-	local SelfLagLow: number = 0.045
-	local SelfLagHigh: number = 0.075
-	local ClaimLag: number = 0.03
-	local ServerReach: number = 3.8
+	-- tighter lag windows = more consistent hitreg while moving
+	local TargetLag: number = 0.06
+	local SelfLag: number = 0.045
+	local SelfLagLow: number = 0.03
+	local SelfLagHigh: number = 0.06
+	local ClaimLag: number = 0.025
+	local ServerReach: number = 4.0
 	local RangeMargin: number = 0.25
 	local ClaimMargin: number = 0.7
 	local LagCap: number = 8
@@ -7761,16 +7821,12 @@ run(function()
 	
 	task.spawn(function()
 		pcall(function()
-			if bedwars.Handler and bedwars.Handler.Get then
-				AttackRemote = bedwars.Handler:Get("SwordHit") or AttackRemote
-				SwordSwingMiss = bedwars.Handler:Get("SwordSwingMiss") or SwordSwingMiss
-			end
-			if type(AttackRemote.GetRateLimit) ~= "function" then
-				AttackRemote.GetRateLimit = function() return 8 end
-			end
+			AttackRemote = resolveRemote({"SwordHit", "AttackEntity", remotes and remotes.AttackEntity}) or AttackRemote
+			SwordSwingMiss = resolveRemote({"SwordSwingMiss"}) or SwordSwingMiss
 			local rl = 8
 			pcall(function() rl = AttackRemote:GetRateLimit() or 8 end)
-			HitBudget = math.max(0.05, (60 / math.max(rl, 1)) * 0.92)
+			-- slightly tighter budget = more consistent multi-hit pacing
+			HitBudget = math.max(0.045, (60 / math.max(rl, 1)) * 0.88)
 		end)
 	end)
 	
@@ -7896,7 +7952,7 @@ run(function()
 					oldAura:Toggle()
 				end
 
-				local PreviousSwing = bedwars.SwordController.playSwordEffect
+				local PreviousSwing = bedwars.SwordController and bedwars.SwordController.playSwordEffect
 				local Current = {}
 				local Hook
 				Session = Current
@@ -7915,7 +7971,9 @@ run(function()
 					return base(self, SwordMeta, Charged, Config)
 				end
 				SwingHook = Hook
-				bedwars.SwordController.playSwordEffect = SwingHook
+				if bedwars.SwordController and type(PreviousSwing) == "function" then
+					bedwars.SwordController.playSwordEffect = SwingHook
+				end
 	
 				Killaura:Clean(vapeEvents.EntityDamageEvent.Event:Connect(function(DamageTable)
 					if DamageTable.fromEntity == LocalPlayer.Character and DamageTable.damageType == 0 and DamageTable.entityInstance then
@@ -7985,7 +8043,7 @@ run(function()
 					end
 				end))
 	
-				if Animation and (Animation and Animation.Enabled) then
+				if (Animation and Animation.Enabled) then
 					local FakeKnit = {
 						Controllers = {
 							ViewmodelController = {
@@ -8121,7 +8179,7 @@ run(function()
 							TrackTrail((store.rootpart or Root).Position, os.clock())
 							if not Entity.isAlive or (os.clock() - ScanClock) >= ScanInterval then
 								ScanSettings.Origin = Root.Position
-								ScanSettings.Range = (SwingRange and ((SwingRange and SwingRange.Value) or 18)) or 18
+								ScanSettings.Range = (SwingRange and ((SwingRange and SwingRange.Value) or 0)) or 18
 								ScanSettings.Wallcheck = Targets and Targets.Walls and Targets.Walls.Enabled or nil
 								ScanSettings.Part = "RootPart"
 								ScanSettings.Players = not Targets or not Targets.Players or Targets.Players.Enabled ~= false
@@ -8129,10 +8187,8 @@ run(function()
 								ScanSettings.Priority = Targets and Targets.Priority and Targets.Priority.Value
 								local sortKey = (Sort and Sort.Value) or "Distance"
 								local sm = sortmethods or {}
-								ScanSettings.Sort = sm[sortKey] or sm.Distance or sm.Health or sm.Threat
-								local okEnt, res = pcall(function()
-									return Entity.AllPosition(ScanSettings)
-								end)
+								ScanSettings.Sort = sm[sortKey] or sm.Distance or sm.Health
+								local okEnt, res = pcall(function() return Entity.AllPosition(ScanSettings) end)
 								Entities = (okEnt and res) or {}
 								ScanClock = os.clock()
 							end
@@ -8148,17 +8204,13 @@ run(function()
 								local SwordSpeed: number = SwordMeta and SwordMeta.sword and SwordMeta.sword.attackSpeed or 0.3
 								local highReg = HighHitreg and HighHitreg.Enabled
 								local hitregVal = (Hitreg and Hitreg.Value) or "Normal"
-								local Spacing, SpeedScale, GapMin, AttackData, Stock = 0.3, 1, 0.11, nil, false
+								local Spacing, SpeedScale, GapMin, AttackData, Stock = 0.28, 1, 0.1, nil, false
 								if type(SwordTiming) == "table" and type(SwordTiming.Calculate) == "function" then
 									local ok, a, b, c, d, e = pcall(function()
 										return SwordTiming.Calculate(SwordSpeed, FuryMultiplier, highReg, HitBudget)
 									end)
 									if ok then
-										Spacing = a or 0.3
-										SpeedScale = b or 1
-										GapMin = c or 0.11
-										AttackData = d
-										Stock = e
+										Spacing, SpeedScale, GapMin, AttackData, Stock = a or 0.28, b or 1, c or 0.1, d, e
 									end
 								end
 								local Quantized: boolean = Stock and highReg and hitregVal ~= "Burst" and HitregTiming.AlignFrames and FrameTime > 1 / 30
@@ -8196,7 +8248,7 @@ run(function()
 	
 									local Delta: Vector3 = (v.RootPart.Position - SelfPosition)
 									local Flat: Vector3 = Delta * FlatScale
-									if ((AngleSlider and AngleSlider.Value) or 360) < 360 and Flat.Magnitude > 0.001 and math.acos(math.clamp(LocalFacing:Dot(Flat.Unit), -1, 1)) > (math.rad(((AngleSlider and AngleSlider.Value) or 360)) / 2) then
+									if AngleSlider.Value < 360 and Flat.Magnitude > 0.001 and math.acos(math.clamp(LocalFacing:Dot(Flat.Unit), -1, 1)) > (math.rad(AngleSlider.Value) / 2) then
 										continue
 									end
 	
@@ -8214,13 +8266,13 @@ run(function()
 									Target.Hittable = Hittable
 									Target.Check = Hittable and BoxAttackColor or BoxSwingColor
 									table.insert(Hittable and Attacked or SwingOnly, Target)
-									if #Attacked >= ((MaxTargets and MaxTargets.Value) or 1) then
+									if #Attacked >= MaxTargets.Value then
 										break
 									end
 								end
 	
 								for _, Target: any in SwingOnly do
-									if #Attacked >= ((MaxTargets and MaxTargets.Value) or 1) then
+									if #Attacked >= MaxTargets.Value then
 										break
 									end
 									table.insert(Attacked, Target)
@@ -8317,7 +8369,7 @@ run(function()
 										Delta = v.RootPart.Position - CurrentRoot.Position
 										local TargetPosition, ServerDistance = GetTargetState(ActualRoot.Position, v.RootPart.AssemblyLinearVelocity)
 										local Flat: Vector3 = Delta * FlatScale
-										if ServerDistance > RangeLimit or ((AngleSlider and AngleSlider.Value) or 360) < 360 and Flat.Magnitude > 0.001 and math.acos(math.clamp((CurrentRoot.CFrame.LookVector * FlatScale):Dot(Flat.Unit), -1, 1)) > (math.rad(((AngleSlider and AngleSlider.Value) or 360)) / 2) then
+										if ServerDistance > RangeLimit or AngleSlider.Value < 360 and Flat.Magnitude > 0.001 and math.acos(math.clamp((CurrentRoot.CFrame.LookVector * FlatScale):Dot(Flat.Unit), -1, 1)) > (math.rad(AngleSlider.Value) / 2) then
 											continue
 										end
 										local Airborne: boolean = (v.Humanoid and v.Humanoid.FloorMaterial == Enum.Material.Air) or math.abs(v.RootPart.AssemblyLinearVelocity.Y) > 0.01
@@ -8358,19 +8410,36 @@ run(function()
 												end
 												table.insert(GhostPending, tick() + Timeout)
 											end
-											AttackRemote:Fire(nil, {
-												weapon = Sword.tool,
-												chargedAttack = {chargeRatio = 0},
-												entityInstance = v.Character,
-												validate = {
-													raycast = {
-														cameraPosition = {value = HitPosition},
-														cursorDirection = {value = Direction}
-													},
-													targetPosition = {value = TargetPosition},
-													selfPosition = {value = HitPosition}
+											do
+												local hitPayload = {
+													weapon = Sword.tool,
+													chargedAttack = {chargeRatio = 0},
+													entityInstance = v.Character,
+													validate = {
+														raycast = {
+															cameraPosition = {value = HitPosition},
+															cursorDirection = {value = Direction}
+														},
+														targetPosition = {value = TargetPosition},
+														selfPosition = {value = HitPosition}
+													}
 												}
-											})
+												-- primary (Handler-style)
+												pcall(function()
+													AttackRemote:Fire(nil, hitPayload)
+												end)
+												-- secondary paths for elev/client remotes (improves register)
+												pcall(function()
+													if AttackRemote.SendToServer then
+														AttackRemote:SendToServer(hitPayload)
+													end
+												end)
+												pcall(function()
+													if AttackRemote.FireServer then
+														AttackRemote:FireServer(hitPayload)
+													end
+												end)
+											end
 											if (FastHits and FastHits.Enabled) and not FastHitPending and tick() > LastShot then
 												local Projectiles = GetShots()
 												if #Projectiles > 0 then
@@ -22887,21 +22956,12 @@ run(function()
 	if type(util) ~= "table" then util = {} end
 	if type(util.Chest) ~= "table" then
 		util.Chest = {
-			Range = 20,
-			OwnFolder = function() return nil end,
-			InRange = function() return false end,
-			Observe = function() end,
-			Give = function() return false end,
-			Take = function() end,
-			Entries = function() return {} end,
+			Range = 20, OwnFolder = function() return nil end, InRange = function() return false end,
+			Observe = function() end, Give = function() return false end, Take = function() end, Entries = function() return {} end,
 		}
 	end
-	if type(util.Studs) ~= "function" then
-		util.Studs = function(val) return val == 1 and "stud" or "studs" end
-	end
-	if type(util.Shop) ~= "table" then
-		util.Shop = { ChestScreenOpen = function() return false end }
-	end
+	if type(util.Studs) ~= "function" then util.Studs = function(v) return v == 1 and "stud" or "studs" end end
+	if type(util.Shop) ~= "table" then util.Shop = { ChestScreenOpen = function() return false end } end
 	local cooldowns = {}
 	local banked = 0
 
@@ -55164,18 +55224,13 @@ end)
 run(function()
 	local MetalDetectorSpy
 	local TeamCheckToggle
-
 	if not vape.Categories.KitSpy then
-		vape.Categories.KitSpy = vape.Categories.Render or vape.Categories.Kits or vape.Categories.Blatant or vape.Categories.Utility
-		if not vape.Categories.KitSpy then
-			vape.Categories.KitSpy = {
-				CreateModule = function(_, opts)
-					return { Enabled = false, CreateToggle = function() return {Enabled=false} end, CreateSlider = function() return {Value=0} end, Clean = function() end, Toggle = function() end }
-				end
-			}
-		end
+		vape.Categories.KitSpy = vape.Categories.Render or vape.Categories.Kits or vape.Categories.Blatant or vape.Categories.Utility or {
+			CreateModule = function(_, opts)
+				return { Enabled = false, CreateToggle = function() return {Enabled=false} end, CreateSlider = function() return {Value=0} end, Clean = function() end, Toggle = function() end }
+			end
+		}
 	end
-	
 	MetalDetectorSpy = vape.Categories.KitSpy:CreateModule({
 		Name = 'MetalDetectorSpy',
 		Function = function(callback)
@@ -66861,4 +66916,15 @@ run(function()
 		Tooltip = 'How long to keep sword after heal before next cycle'
 	})
 end)
-
+local highReg = HighHitreg and HighHitreg.Enabled
+								local hitregVal = (Hitreg and Hitreg.Value) or "Normal"
+								local Spacing, SpeedScale, GapMin, AttackData, Stock = 0.28, 1, 0.1, nil, false
+								if type(SwordTiming) == "table" and type(SwordTiming.Calculate) == "function" thena
+									local ok, a, b, c, d, e = pcall(function()
+										return SwordTiming.Calculate(SwordSpeed, FuryMultiplier, highReg, HitBudget)
+									end)
+									if ok then
+										Spacing, SpeedScale, GapMin, AttackData, Stock = a or 0.28, b or 1, c or 0.1, d, e
+									end
+								end
+								local Quantized: boolean = Stock and highReg and hitregVal ~= "Burst" and HitregTiming.AlignFrames and FrameTime > 1 / 30

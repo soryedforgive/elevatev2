@@ -163,6 +163,16 @@ local store = {
 	terraKickTime = 0,
 }
 getgenv().store = store
+
+-- SAFE bedwars handler get (Handler may be nil during early module load)
+local function __elevateSafeHandlerGet(name)
+	local h = bedwars and bedwars.Handler
+	if type(h) == "table" and type(h.Get) == "function" then
+		local ok, r = pcall(h.Get, h, name)
+		if ok then return r end
+	end
+	return nil
+end
 local splashParams = RaycastParams.new()
 splashParams.FilterType = Enum.RaycastFilterType.Include
 local function splashAimPoint(root, hip)
@@ -7444,56 +7454,28 @@ run(function()
 	local TargetInfo = targetinfo
 	local getTinkerMount = bedwars.getTinkerMount
 	local watchProjectile = bedwars.watchProjectile
-	-- Inline SwordTiming (do not use vape.Libraries.swordtiming — Elevate's copy is often wrong/mismatched)
-	local WeaponSpacing = {
-		[0.21] = 0.229,
-		[0.25] = 0.249,
-		[0.35] = 0.345,
-		[0.4] = 0.341,
-		[0.6] = 0.63,
-	}
+	-- INLINE swordtiming (Elevate library is often nil/wrong)
+	local WeaponSpacing = {[0.21]=0.229,[0.25]=0.249,[0.35]=0.345,[0.4]=0.341,[0.6]=0.63}
 	local SwordTiming = {
-		SafeSpacing = 0.295,
-		HighSpacing = 0.285,
-		HitFloor = 0.292,
-		GapFloor = 0.2965,
-		ArrivalFloor = 0.274,
+		SafeSpacing = 0.295, HighSpacing = 0.285,
+		HitFloor = 0.292, GapFloor = 0.2965, ArrivalFloor = 0.274,
 		CooldownCorrection = (0.017999999225139618 / 10) + 0.013412,
 	}
-	-- Matches Killaura call: Calculate(SwordSpeed, FuryMultiplier, HighHitreg.Enabled, HitBudget)
 	function SwordTiming.Calculate(Speed, FuryMultiplier, HighEnabled, Budget, Hits)
-		local HighMode
-		local fury = 1
+		local HighMode, fury = "Stealth Mode", 1
 		if type(FuryMultiplier) == "string" then
-			-- Alternate API: Calculate(Speed, HighMode, DynamicDelay, Budget, Hits)
 			HighMode = FuryMultiplier
-			if type(HighEnabled) == "number" then
-				-- DynamicDelay passed as third
-			elseif type(HighEnabled) == "boolean" then
-				HighMode = HighEnabled and "Advanced Mode" or HighMode
-			end
 		else
 			fury = type(FuryMultiplier) == "number" and FuryMultiplier or 1
 			if HighEnabled == true or HighEnabled == "Advanced Mode" or HighEnabled == "Dynamic" then
 				HighMode = "Advanced Mode"
-			elseif HighEnabled == "Dynamic" then
-				HighMode = "Dynamic"
-			else
-				HighMode = "Stealth Mode"
 			end
 		end
 		local Stock = type(Speed) == "number" and math.abs(Speed - 0.3) < 0.001
 		local Normal = (HighMode == "Advanced Mode" or HighMode == "Dynamic") and SwordTiming.HighSpacing or SwordTiming.SafeSpacing
 		local Spacing = Stock and Normal or WeaponSpacing[Speed] or ((type(Speed) == "number" and Speed + 0.03) or Normal)
-		if type(fury) == "number" and fury > 0 and fury ~= 1 then
-			Spacing = Spacing * fury
-		end
-		if HighMode == "Dynamic" and type(HighEnabled) == "number" then
-			Spacing = math.max(Spacing * (HighEnabled / 100), Budget or 0)
-		end
-		if Hits and Hits ~= 35 then
-			Spacing = math.max(Spacing, 10 / math.max(Hits - 1, 1))
-		end
+		if type(fury) == "number" and fury > 0 and fury ~= 1 then Spacing = Spacing * fury end
+		if Hits and Hits ~= 35 then Spacing = math.max(Spacing, 10 / math.max(Hits - 1, 1)) end
 		Spacing = math.max(Spacing, Budget or 0)
 		local Scale = Spacing / (Stock and Normal or SwordTiming.SafeSpacing)
 		local Gap = (Scale < 1 and SwordTiming.GapFloor or SwordTiming.HitFloor) * Scale
@@ -7589,8 +7571,9 @@ run(function()
 	local SwordSwingMiss = {FireServer = function() end}
 	local ProjectileRemote = {Fire = function() end, FireServer = function() end, CallServer = function() end}
 	pcall(function()
-		if bedwars and bedwars.Handler and bedwars.Handler.Get then
-			ProjectileRemote = bedwars.Handler:Get("ProjectileFire") or ProjectileRemote
+		if bedwars and type(bedwars.Handler) == "table" and type(bedwars.Handler.Get) == "function" then
+			local r = __elevateSafeHandlerGet("ProjectileFire")
+			if r then ProjectileRemote = r end
 		end
 	end)
 	local FastHitPending, LastShot = nil, 0
@@ -7727,26 +7710,24 @@ run(function()
 	end
 	
 	task.spawn(function()
-		local tries = 0
-		repeat
-			tries += 1
+		for _ = 1, 40 do
 			pcall(function()
-				if bedwars and bedwars.Handler and bedwars.Handler.Get then
-					local hit = bedwars.Handler:Get("SwordHit")
-					local miss = bedwars.Handler:Get("SwordSwingMiss")
+				if bedwars and type(bedwars.Handler) == "table" and type(bedwars.Handler.Get) == "function" then
+					local hit = __elevateSafeHandlerGet("SwordHit")
+					local miss = __elevateSafeHandlerGet("SwordSwingMiss")
 					if hit then AttackRemote = hit end
 					if miss then SwordSwingMiss = miss end
 				end
-		end)
-			if AttackRemote and AttackRemote.GetRateLimit then
+			end)
+			if AttackRemote and type(AttackRemote.GetRateLimit) == "function" then
 				local ok, rate = pcall(function() return AttackRemote:GetRateLimit() end)
 				if ok and type(rate) == "number" and rate > 0 then
 					HitBudget = 60 / rate
+					break
 				end
-				break
 			end
 			task.wait(0.25)
-		until tries >= 40
+		end
 	end)
 	
 	local FireRates: {[string]: number} = {}
@@ -22853,14 +22834,14 @@ run(function()
 	local OnlyWhenLow
 	local LowHealth
 
-	local util = vape.Libraries.bedwarsutil
+	local util = vape.Libraries and vape.Libraries.bedwarsutil
 	if type(util) ~= "table" then
 		util = {
 			Chest = {
 				Range = 20,
 				OwnFolder = function() return nil end,
 				InRange = function() return false end,
-				Observe = function() end,
+				Observe = function(_, fn) if fn then pcall(fn) end end,
 				Give = function() return false end,
 				Take = function() return false end,
 			},
@@ -22872,7 +22853,7 @@ run(function()
 			Queue = { Await = function() return true end },
 			Studs = "studs",
 		}
-		warn("[elevate] bedwarsutil library missing — AutoBank stubs active")
+		warn("[elevate] bedwarsutil missing — AutoBank using stubs")
 	end
 	local cooldowns = {}
 	local banked = 0
@@ -22995,8 +22976,8 @@ run(function()
 		Name = 'Chest range',
 		Min = 1,
 		Max = 30,
-		Default = (util and util.Chest and util.Chest.Range) or 20,
-		Suffix = (util and util.Studs) or 'studs',
+		Default = (type(util)=='table' and util.Chest and util.Chest.Range) or 20,
+		Suffix = (type(util)=='table' and util.Studs) or 'studs',
 		Tooltip = 'How close to your personal chest you need to be'
 	})
 	Withdraw = AutoBank:CreateToggle({
@@ -33218,7 +33199,7 @@ run(function()
 				local Changed = function()
 					if v:GetAttribute('HeldItem') then
 						repeat
-							bedwars.Handler:Get('DropDroneItem'):Fire('SendToServer', {
+							__elevateSafeHandlerGet('DropDroneItem'):Fire('SendToServer', {
 								direction = Vector3.new(1000, 10, 0),
 								position = v.PrimaryPart.Position
 							})
@@ -33232,7 +33213,7 @@ run(function()
 				return v
 			end
 		end
-		if getItem('drone') and bedwars.Handler:Get('FireGuidedProjectile'):Fire('CallServer', 'drone') then
+		if getItem('drone') and __elevateSafeHandlerGet('FireGuidedProjectile'):Fire('CallServer', 'drone') then
 			task.wait(0.1)
 			return getDrone()
 		end
@@ -33298,7 +33279,7 @@ run(function()
 								v.Velocity = Vector3.zero
 								v.CFrame = entitylib.character.RootPart.CFrame - Vector3.new(0, 4, 0)
 								task.spawn(function()
-									bedwars.Handler:Get('PickupItemDrop'):Fire('CallServerAsync', {
+									__elevateSafeHandlerGet('PickupItemDrop'):Fire('CallServerAsync', {
 										itemDrop = v
 									}):andThen(function(suc)
 										if suc and bedwars.SoundList then
@@ -55505,10 +55486,10 @@ run(function()
                 end
                 
                 local sendVal = Device.Value == 'SmartFridge' and 'SMART_FRIDGE' or (Device.Value == 'VR' and 'VR' or Device.Value:upper())
-                bedwars.Handler:Get('SendUserInputType'):Fire('SendToServer', {userInputType = sendVal})
+                __elevateSafeHandlerGet('SendUserInputType'):Fire('SendToServer', {userInputType = sendVal})
             else
                 bedwars.UserInputController.getUserInputType = old
-                bedwars.Handler:Get('SendUserInputType'):Fire('SendToServer', {userInputType = oldDevice})
+                __elevateSafeHandlerGet('SendUserInputType'):Fire('SendToServer', {userInputType = oldDevice})
                 old = nil
             end
         end,
@@ -55524,7 +55505,7 @@ run(function()
         Function = function(val)
             if DeviceSpoofer.Enabled then
                 local sendVal = val == 'SmartFridge' and 'SMART_FRIDGE' or (val == 'VR' and 'VR' or val:upper())
-                bedwars.Handler:Get('SendUserInputType'):Fire('SendToServer', {userInputType = sendVal})
+                __elevateSafeHandlerGet('SendUserInputType'):Fire('SendToServer', {userInputType = sendVal})
             end
         end
     })

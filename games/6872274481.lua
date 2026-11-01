@@ -7435,13 +7435,14 @@ local Attacking
 
 
 run(function()
-	-- ===== Aether Killaura via remote loadstring =====
+	-- ===== Aether Killaura remote loadstring =====
 	-- https://api.aetherv2.xyz/raw/main/games/6872274481/Blatant/Killaura.lua
 
 	local function __kaNotify(msg)
 		warn("[elevate] " .. tostring(msg))
 	end
 
+	-- swordtiming
 	if type(vape.Libraries.swordtiming) ~= "table" or type(vape.Libraries.swordtiming.Calculate) ~= "function" then
 		local timing = {
 			SafeSpacing = 0.296, HighSpacing = 0.2925, HitFloor = 0.285,
@@ -7462,9 +7463,10 @@ run(function()
 		vape.Libraries.swordtiming = timing
 	end
 	if type(vape.Libraries.auraanims) ~= "table" then
-		vape.Libraries.auraanims = { Default = {}, Animations = {} }
+		vape.Libraries.auraanims = { Default = {}, Animations = {}, Normal = {{CFrame = CFrame.Angles(math.rad(-30),0,0), Time = 0.1}, {CFrame = CFrame.new(), Time = 0.1}} }
 	end
 
+	-- StatusEffectUtil
 	do
 		local function makeStub()
 			local util = {}
@@ -7497,14 +7499,23 @@ run(function()
 		end
 	end
 
-	if type(bedwars) == "table" and (type(bedwars.Handler) ~= "table" or type(bedwars.Handler.Get) ~= "function") then
+	-- Handler bridge (Elevate has no bedwars.Handler by default)
+	do
 		local function getNet(Name)
-			local Ok, Object = pcall(function() return bedwars.Client:Get(Name) end)
+			local Ok, Object = pcall(function()
+				return bedwars.Client:Get(Name)
+			end)
 			return Ok and Object or nil
 		end
 		local AttackObject
-		bedwars.Handler = {
-			Get = function(_, Name)
+		if type(bedwars) == "table" then
+			bedwars.Handler = bedwars.Handler or {}
+			local oldGet = bedwars.Handler.Get
+			bedwars.Handler.Get = function(_, Name)
+				if type(oldGet) == "function" then
+					local ok, res = pcall(oldGet, _, Name)
+					if ok and res ~= nil then return res end
+				end
 				if Name == "SwordHit" then
 					return {
 						GetRateLimit = function() return 210 end,
@@ -7537,9 +7548,28 @@ run(function()
 				end
 				return { Fire = function() end, FireServer = function() end, GetRateLimit = function() return 300 end }
 			end
-		}
+		end
 	end
 
+	-- bedwarsutil Chest stub (fixes AutoBank nil.Chest)
+	do
+		vape.Libraries = vape.Libraries or {}
+		local util = vape.Libraries.bedwarsutil
+		if type(util) ~= "table" then
+			util = {}
+			vape.Libraries.bedwarsutil = util
+		end
+		util.Chest = util.Chest or {
+			Range = 20,
+			Get = function() return nil end,
+			Take = function() return false end,
+			Remotes = function() return nil end,
+		}
+		util.Shop = util.Shop or {}
+		util.Range = util.Range or { Shop = 20, Chest = 20 }
+	end
+
+	-- CreateGroup polyfill
 	local function addMissingAPI(mod)
 		if type(mod) ~= "table" or mod.__elevateAetherAPI then return mod end
 		mod.__elevateAetherAPI = true
@@ -7628,8 +7658,34 @@ run(function()
 		end)
 	end
 
+	-- CRITICAL: remote loadstring cannot see Elevate locals — export them to getgenv
+	getgenv().run = run
+	getgenv().vape = vape
+	getgenv().bedwars = bedwars
+	getgenv().store = store
+	getgenv().lplr = lplr
+	getgenv().entitylib = entitylib
+	getgenv().prediction = prediction
+	getgenv().targetinfo = targetinfo
+	getgenv().gameCamera = gameCamera
+	getgenv().tweenService = tweenService
+	getgenv().runService = runService
+	getgenv().inputService = inputService
+	getgenv().remotes = remotes
+	getgenv().getReach = getReach
+	getgenv().getHotbar = rawget(getgenv(), "getHotbar") or getHotbar
+	getgenv().switchItem = switchItem
+	getgenv().hotbarSwitch = hotbarSwitch
+	getgenv().getItem = getItem
+	getgenv().getProjectiles = getProjectiles or function() return {} end
+	getgenv().isAfk = isAfk or function() return false end
+	if type(sortmethods) == "table" then getgenv().sortmethods = sortmethods end
+	if type(sortlist) == "table" then getgenv().sortlist = sortlist end
+
 	local URL = "https://api.aetherv2.xyz/raw/main/games/6872274481/Blatant/Killaura.lua"
-	local okHttp, src = pcall(function() return game:HttpGet(URL) end)
+	local okHttp, src = pcall(function()
+		return game:HttpGet(URL)
+	end)
 	if not okHttp or type(src) ~= "string" or #src < 200 then
 		__kaNotify("Aether Killaura HttpGet failed: " .. tostring(src))
 	else
@@ -7637,6 +7693,16 @@ run(function()
 		if not fn then
 			__kaNotify("Aether Killaura compile failed: " .. tostring(err))
 		else
+			-- some executors need setfenv to see getgenv values as globals
+			pcall(function()
+				setfenv(fn, setmetatable({}, {
+					__index = function(_, k)
+						local g = getgenv()
+						if g[k] ~= nil then return g[k] end
+						return rawget(_G, k)
+					end
+				}))
+			end)
 			local okRun, runErr = pcall(fn)
 			if not okRun then
 				__kaNotify("Aether Killaura execute failed: " .. tostring(runErr))
@@ -7652,7 +7718,7 @@ run(function()
 	-- Skip old embedded Killaura body
 	do return end
 
-	-- (dead code below kept so file structure stays valid)
+	-- dead code kept for structure
 	local bedwars = setmetatable({}, {__index = bedwars})
 	local function getNet(Name)
 		local Ok, Object = pcall(function()

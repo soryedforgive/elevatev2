@@ -1111,6 +1111,7 @@ return helpers
 			vape.Libraries.bedwarsutil = lib
 			shared.AetherBedWarsUtil = lib
 			print("[elevate] bedwarsutil loaded from pack")
+			print("[elevate] Night/Aether Killaura build 2026-11-01-statusfix loaded")
 		else
 			warn("[elevate] bedwarsutil exec failed:", lib)
 		end
@@ -2313,6 +2314,65 @@ run(function()
 	})
 
 	getgenv().bedwars = bedwars
+
+	-- Force StatusEffectUtil so Aether Killaura never nil:isActive
+	print("[elevate] Night/Aether Killaura build 2026-11-01-statusfix loaded")
+	do
+		local function makeStatusEffectUtil()
+			local util = nil
+			local loaders = {
+				function()
+					return require(game:GetService("ReplicatedStorage").TS.entity["status-effect"]["status-effect-util"]).StatusEffectUtil
+				end,
+				function()
+					return require(game:GetService("ReplicatedStorage").TS["status-effect"]["status-effect-util"]).StatusEffectUtil
+				end,
+				function()
+					return require(game:GetService("ReplicatedStorage").TS.entity["status-effect-util"]).StatusEffectUtil
+				end,
+			}
+			for _, loader in ipairs(loaders) do
+				local ok, mod = pcall(loader)
+				if ok and type(mod) == "table" and (type(mod.isActive) == "function" or type(mod.IsActive) == "function") then
+					util = mod
+					break
+				end
+			end
+			if not util then
+				util = {}
+				function util.isActive(_, character, effect)
+					if not character then return false end
+					local ok, res = pcall(function()
+						if effect == "frozen" then
+							local untilt = character:GetAttribute("StunnedUntilTime")
+							if untilt and untilt > workspace:GetServerTimeNow() then return true end
+							if character:FindFirstChild("elk") then return true end
+						end
+						if effect == "fury_potion" then
+							if character:GetAttribute("Fury") or character:GetAttribute("fury_potion") then return true end
+						end
+						local key = tostring(effect or "")
+						return character:GetAttribute(key) or character:GetAttribute("StatusEffect_" .. key) and true or false
+					end)
+					return ok and res and true or false
+				end
+				util.IsActive = util.isActive
+			end
+			return util
+		end
+		local se = makeStatusEffectUtil()
+		rawset(bedwars, "StatusEffectUtil", se)
+		getgenv().__elevateStatusActive = function(character, effect)
+			local u = bedwars.StatusEffectUtil
+			if not u then return false end
+			local fn = u.isActive or u.IsActive
+			if type(fn) ~= "function" then return false end
+			local ok, res = pcall(fn, u, character, effect)
+			return ok and res and true or false
+		end
+		-- also global for run() chunks
+		__elevateStatusActive = getgenv().__elevateStatusActive
+	end
 
 	prediction.Raycast = function(origin, direction, params)
 		return bedwars.QueryUtil:raycast(origin, direction, params)
@@ -9072,7 +9132,7 @@ Killaura = vape.Categories.Blatant:CreateModule({
 							Blocked = not Entity.isAlive
 								or (LocalPlayer.Character:GetAttribute("StunnedUntilTime") or 0) > workspace:GetServerTimeNow()
 								or LocalPlayer.Character:FindFirstChild("elk") ~= nil
-								or __elevateStatusActive(LocalPlayer.Character, "frozen")
+								or (getgenv().__elevateStatusActive or __elevateStatusActive)(LocalPlayer.Character, "frozen")
 						end
 	
 						if not Blocked then
@@ -9113,7 +9173,7 @@ Killaura = vape.Categories.Blatant:CreateModule({
 								UpdateSelfReference(os.clock(), SendPosition)
 								local LocalFacing: Vector3 = Root.CFrame.LookVector * FlatScale
 								local DisplayName: string = SwordMeta and SwordMeta.displayName or ""
-								local FuryMultiplier: number = __elevateStatusActive(LocalPlayer.Character, "fury_potion") and FuryScale or 1
+								local FuryMultiplier: number = (getgenv().__elevateStatusActive or __elevateStatusActive)(LocalPlayer.Character, "fury_potion") and FuryScale or 1
 								local SwordSpeed: number = SwordMeta and SwordMeta.sword and SwordMeta.sword.attackSpeed or 0.3
 								local Spacing, SpeedScale, GapMin, AttackCooldown, Stock = SwordTiming.Calculate(SwordSpeed, FuryMultiplier, HighHitreg.Enabled, HitBudget)
 								local Quantized: boolean = Stock and HighHitreg.Enabled and Hitreg.Value ~= "Burst" and HitregTiming.AlignFrames and FrameTime > 1 / 30

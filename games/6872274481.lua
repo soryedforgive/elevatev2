@@ -125,6 +125,10 @@ if vape and not vape.Remove then
 		return module 
 	end
 end
+if not vape then
+	error("[elevate] shared.vape missing — run Elevate main before this bedwars script")
+end
+vape.Libraries = vape.Libraries or {}
 local entitylib = vape.Libraries.entity
 local targetinfo = vape.Libraries.targetinfo
 local sessioninfo = vape.Libraries.sessioninfo
@@ -319,8 +323,18 @@ do
 		cat.__elevateAetherPatched = true
 		local old = cat.CreateModule
 		cat.CreateModule = function(self, def)
-			local m = old(self, def)
-			return addMissingAPI(m)
+			if type(old) ~= "function" then
+				return nil
+			end
+			local ok, m = pcall(old, self, def)
+			if not ok then
+				warn("[elevate] CreateModule failed: ", m)
+				return nil
+			end
+			if type(m) == "table" then
+				return addMissingAPI(m)
+			end
+			return m
 		end
 	end
 
@@ -8984,29 +8998,36 @@ Killaura = vape.Categories.Blatant:CreateModule({
 				HitregTiming.PeakUntil = 0
 				OldSwing = PreviousSwing
 				Hook = function(self, SwordMeta, Charged, Config)
+					local function callPrev()
+						if type(PreviousSwing) == "function" then
+							return PreviousSwing(self, SwordMeta, Charged, Config)
+						end
+					end
 					if not Killaura.Enabled or SwingHook ~= Hook then
-						return PreviousSwing(self, SwordMeta, Charged, Config)
+						return callPrev()
 					end
 					if Config and Config.playAnimation == false then
-						return PreviousSwing(self, SwordMeta, Charged, Config)
+						return callPrev()
 					end
 					if LegitAura.Enabled then
-						local Clicked: number = bedwars.SwordController.lastSwing
+						local Clicked = bedwars.SwordController and bedwars.SwordController.lastSwing
 						if (tick() - LastAttack) < 0.4 and Clicked == EffectSwing then
 							return
 						end
 						EffectSwing = Clicked
-						return PreviousSwing(self, SwordMeta, Charged, Config)
+						return callPrev()
 					end
 					if ((tick() - LastAttack) < 0.4 or (tick() - AnimDelay) < 0.4) and (tick() - LastEffect) < SwingGap then
 						return
 					end
 					LastEffect = tick()
 					SwingGap = math.max(SwingTime:GetRandomValue(), 0.11)
-					return PreviousSwing(self, SwordMeta, Charged, Config)
+					return callPrev()
 				end
 				SwingHook = Hook
-				bedwars.SwordController.playSwordEffect = SwingHook
+				if bedwars.SwordController then
+					bedwars.SwordController.playSwordEffect = SwingHook
+				end
 	
 				Killaura:Clean(vapeEvents.EntityDamageEvent.Event:Connect(function(DamageTable)
 					if DamageTable.fromEntity == LocalPlayer.Character and DamageTable.damageType == 0 and DamageTable.entityInstance then
@@ -9185,10 +9206,13 @@ Killaura = vape.Categories.Blatant:CreateModule({
 						if not Blocked and GUI.Enabled then
 							local open = false
 							pcall(function()
-								open = bedwars.AppController and bedwars.AppController:isLayerOpen(bedwars.UILayers.MAIN)
+								if bedwars.AppController and bedwars.UILayers then
+									open = bedwars.AppController:isLayerOpen(bedwars.UILayers.MAIN)
+								end
 							end)
 							if open then
-							Blocked = true
+								Blocked = true
+							end
 						end
 						if not Blocked and Attackable.Enabled then
 							Blocked = not Entity.isAlive

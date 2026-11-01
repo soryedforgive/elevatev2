@@ -7416,9 +7416,14 @@ run(function()
 	local UserInputService = inputService
 	local PredictionLib = prediction
 	local TargetInfo = targetinfo
-	local getTinkerMount = bedwars.getTinkerMount
-	local watchProjectile = bedwars.watchProjectile
-	local SwordTiming = vape.Libraries.swordtiming
+	local getTinkerMount = bedwars.getTinkerMount or function() return nil end
+	local watchProjectile = bedwars.watchProjectile or function() end
+	local SwordTiming = (vape.Libraries and vape.Libraries.swordtiming) or {
+		ArrivalFloor = 0.05,
+		HitFloor = 0.11,
+		GapFloor = 0.11,
+		HighSpacing = 0.18,
+	}
 	local Killaura
 	local Targets
 	local Sort
@@ -7502,9 +7507,21 @@ run(function()
 	local ArmWrist: Motor6D?
 	local ArcCheck: RaycastParams = RaycastParams.new()
 	ArcCheck.FilterType = Enum.RaycastFilterType.Exclude
-	local AttackRemote = {FireServer = function() end}
-	local SwordSwingMiss = {FireServer = function() end}
-	local ProjectileRemote = bedwars.Handler:Get("ProjectileFire")
+	local AttackRemote = {FireServer = function() end, SendToServer = function() end, GetRateLimit = function() return 8 end}
+	local SwordSwingMiss = {FireServer = function() end, SendToServer = function() end}
+	local ProjectileRemote = {FireServer = function() end, SendToServer = function() end, GetRateLimit = function() return 8 end}
+	pcall(function()
+		local H = bedwars.Handler
+		if type(H) == "table" and type(H.Get) == "function" then
+			ProjectileRemote = H:Get("ProjectileFire") or ProjectileRemote
+		elseif bedwars.Client and remotes then
+			local key = remotes.ProjectileFire or remotes.FireProjectile
+			if key then
+				local ok, r = pcall(function() return bedwars.Client:Get(key) end)
+				if ok and r then ProjectileRemote = r end
+			end
+		end
+	end)
 	local FastHitPending, LastShot = nil, 0
 	local ArrivalFloor: number = SwordTiming.ArrivalFloor
 	local HitBudget, HitFloor, GapFloor = 0.2, SwordTiming.HitFloor, SwordTiming.GapFloor
@@ -7524,7 +7541,10 @@ run(function()
 	local SelfReference = {Low = Vector3.zero, High = Vector3.zero, Claim = Vector3.zero}
 	local BurstShots, BurstWait = 0, 0
 	local FuryScale: number = 1 - ((bedwars.BlackMarketeerBalance and bedwars.BlackMarketeerBalance.FURY_POTION_ATTACK_SPEED_MULTIPLIER or 0.5) - 1)
-	local SwordEffect = getmetatable(bedwars.SwordController).__index.playSwordEffect
+	local SwordEffect = nil
+	pcall(function()
+		SwordEffect = getmetatable(bedwars.SwordController).__index.playSwordEffect
+	end)
 	local ScanInterval: number = 1 / 120
 	local FlatScale: Vector3 = Vector3.new(1, 0, 1)
 	local ParkedPosition: Vector3 = Vector3.new(9e9, 9e9, 9e9)
@@ -7639,9 +7659,39 @@ run(function()
 	end
 	
 	task.spawn(function()
-		AttackRemote = bedwars.Handler:Get("SwordHit")
-		SwordSwingMiss = bedwars.Handler:Get("SwordSwingMiss")
-		HitBudget = math.max(0.05, (60 / AttackRemote:GetRateLimit()) * 0.92)
+		pcall(function()
+			local H = bedwars.Handler
+			if type(H) == "table" and type(H.Get) == "function" then
+				AttackRemote = H:Get("SwordHit") or AttackRemote
+				SwordSwingMiss = H:Get("SwordSwingMiss") or SwordSwingMiss
+			elseif bedwars.Client and remotes then
+				local key = remotes.AttackEntity or remotes.SwordHit or "SwordHit"
+				local ok, r = pcall(function() return bedwars.Client:Get(key) end)
+				if ok and r then AttackRemote = r end
+			end
+			-- NetManaged fallback
+			if (not AttackRemote or type(AttackRemote.FireServer) ~= "function") or AttackRemote.FireServer == nil then
+				local ok, net = pcall(function()
+					return replicatedStorage.rbxts_include.node_modules["@rbxts"].net.out._NetManaged
+				end)
+				if ok and net then
+					local child = net:FindFirstChild("SwordHit") or net:FindFirstChild("AttackEntity")
+					if child then
+						AttackRemote = {
+							FireServer = function(_, ...) return child:FireServer(...) end,
+							SendToServer = function(_, ...) return child:FireServer(...) end,
+							GetRateLimit = function() return 8 end,
+						}
+					end
+				end
+			end
+			if type(AttackRemote.GetRateLimit) ~= "function" then
+				AttackRemote.GetRateLimit = function() return 8 end
+			end
+			local rl = 8
+			pcall(function() rl = AttackRemote:GetRateLimit() or 8 end)
+			HitBudget = math.max(0.05, (60 / math.max(rl, 1)) * 0.92)
+		end)
 	end)
 	
 	local FireRates: {[string]: number} = {}
@@ -22866,7 +22916,7 @@ run(function()
 		Name = 'Chest range',
 		Min = 1,
 		Max = 30,
-		Default = util.Chest.Range,
+		Default = (util.Chest and util.Chest.Range) or 20,
 		Suffix = util.Studs,
 		Tooltip = 'How close to your personal chest you need to be'
 	})
@@ -55007,6 +55057,35 @@ run(function()
 	local MetalDetectorSpy
 	local TeamCheckToggle
 	
+	if not vape.Categories.KitSpy then
+		pcall(function()
+			vape.Categories.KitSpy = vape.Categories.Render or vape.Categories.Kits or vape.Categories.Blatant
+		end)
+		if not vape.Categories.KitSpy and vape.CreateCategory then
+			pcall(function()
+				vape.Categories.KitSpy = vape:CreateCategory({Name = "KitSpy", Icon = "render"})
+			end)
+		end
+		-- last resort: stub so CreateModule does not hard-crash the whole file section
+		if not vape.Categories.KitSpy then
+			vape.Categories.KitSpy = {
+				CreateModule = function(_, opts)
+					return {
+						Enabled = false,
+						Options = {},
+						CreateToggle = function() return {Enabled = false, Object = {Visible = false}} end,
+						CreateSlider = function() return {Value = 0, Object = {Visible = false}} end,
+						CreateDropdown = function() return {Value = "", Object = {Visible = false}} end,
+						CreateButton = function() return {} end,
+						CreateTargets = function() return {Players={Enabled=true},NPCs={Enabled=false},Walls={Enabled=false}} end,
+						CreateTextList = function() return {ListEnabled={}, Object={Visible=false}} end,
+						Clean = function() end,
+						Toggle = function() end,
+					}
+				end
+			}
+		end
+	end
 	MetalDetectorSpy = vape.Categories.KitSpy:CreateModule({
 		Name = 'MetalDetectorSpy',
 		Function = function(callback)
@@ -66077,12 +66156,32 @@ run(function()
 		Tooltip = "Which loop drives playback movement",
 	})
 
-	local recordList = replayModule:CreateMultiDropdown({
-		Name = "Record",
-		List = {"Entities", "Animations", "Armor", "Damage effects", "Sounds"},
-		Default = {"Entities", "Animations", "Armor", "Damage effects", "Sounds"},
-		Tooltip = 'What to record',
-	})
+	local recordList
+	if type(replayModule.CreateMultiDropdown) == "function" then
+		recordList = replayModule:CreateMultiDropdown({
+			Name = "Record",
+			List = {"Entities", "Animations", "Armor", "Damage effects", "Sounds"},
+			Default = {"Entities", "Animations", "Armor", "Damage effects", "Sounds"},
+			Tooltip = 'What to record',
+		})
+	else
+		-- GUI build without CreateMultiDropdown: emulate with Has()
+		local enabled = {
+			Entities = true, Animations = true, Armor = true,
+			["Damage effects"] = true, Sounds = true,
+		}
+		recordList = {
+			Has = function(_, name) return enabled[name] == true end,
+			ListEnabled = {"Entities", "Animations", "Armor", "Damage effects", "Sounds"},
+		}
+		pcall(function()
+			replayModule:CreateDropdown({
+				Name = "Record mode",
+				List = {"All", "Entities only"},
+				Default = "All",
+			})
+		end)
+	end
 	local function recordFlag(name)
 		return setmetatable({}, {__index = function(_, key)
 			if key == "Enabled" then

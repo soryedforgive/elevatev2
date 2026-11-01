@@ -193,46 +193,151 @@ do
 	vape.Libraries.swordtiming = timing
 end
 
--- Elevate/Aether CreateGroup polyfill for modules missing the method
+-- ===== FULL Elevate API polyfill (Group + MultiDropdown) =====
+-- Elevate has Toggle/Slider/Dropdown/TwoSlider/Targets/TextList but NOT CreateGroup / CreateMultiDropdown.
 do
-	local function patchModule(mod)
-		if type(mod) ~= "table" then return end
-		if type(mod.CreateGroup) == "function" then return end
-		function mod:CreateGroup(opts)
-			opts = opts or {}
-			local g = { Enabled = opts.Default == true, Name = opts.Name }
-			setmetatable(g, {__index = function(t, k)
-				if k == "CreateSlider" or k == "CreateToggle" or k == "CreateDropdown"
-					or k == "CreateColorSlider" or k == "CreateTextBox" or k == "CreateTextList"
-					or k == "CreateMultiDropdown" or k == "CreateTwoSlider" or k == "CreateTargets" then
-					return function(_, o)
-						if type(mod[k]) == "function" then return mod[k](mod, o) end
-						if k == "CreateToggle" then return {Enabled = o and o.Default or false} end
-						if k == "CreateSlider" then return {Value = o and o.Default or 0, SetValue=function() end} end
-						if k == "CreateTwoSlider" then return {GetRandomValue=function() return o and o.DefaultMin or 0 end} end
-						if k == "CreateDropdown" then return {Value = o and o.List and o.List[1]} end
-						if k == "CreateMultiDropdown" then return {Has=function() return false end} end
-						if k == "CreateTextList" then return {ListEnabled = o and o.Default or {}} end
-						return {Hue=0,Sat=1,Value=1,Opacity=1, Value=""}
+	local function addMissingAPI(mod)
+		if type(mod) ~= "table" or mod.__elevateAetherAPI then return mod end
+		mod.__elevateAetherAPI = true
+
+		if type(mod.CreateGroup) ~= "function" then
+			function mod:CreateGroup(opts)
+				opts = opts or {}
+				local parent = self
+				local outer
+				if opts.Name then
+					outer = parent:CreateToggle({
+						Name = opts.Name,
+						Default = opts.Default == true,
+						Function = opts.Function,
+						Tooltip = opts.Tooltip,
+						Darker = opts.Darker
+					})
+				end
+				local group = {}
+				local function proxy(method)
+					return function(_, childOpts)
+						childOpts = childOpts or {}
+						childOpts.Darker = true
+						if type(parent[method]) == "function" then
+							return parent[method](parent, childOpts)
+						end
+						-- fallback stubs
+						if method == "CreateToggle" then
+							return {Enabled = childOpts.Default == true, Toggle = function() end}
+						elseif method == "CreateSlider" then
+							return {Value = childOpts.Default or childOpts.Min or 0, SetValue = function() end}
+						elseif method == "CreateTwoSlider" then
+							local o = {ValueMin = childOpts.DefaultMin or 0, ValueMax = childOpts.DefaultMax or 0}
+							function o:GetRandomValue() return self.ValueMin end
+							return o
+						elseif method == "CreateDropdown" then
+							return {Value = childOpts.List and childOpts.List[1]}
+						elseif method == "CreateTextList" then
+							return {ListEnabled = childOpts.Default or {}}
+						elseif method == "CreateMultiDropdown" then
+							local o = {ListEnabled = childOpts.Default or {}}
+							function o:Has(name)
+								for _, v in self.ListEnabled do
+									if tostring(v):lower() == tostring(name):lower() then return true end
+								end
+								return false
+							end
+							return o
+						elseif method == "CreateColorSlider" then
+							return {Hue = 0, Sat = 1, Value = 1, Opacity = 1}
+						elseif method == "CreateTextBox" then
+							return {Value = childOpts.Default or ""}
+						end
+						return {}
 					end
 				end
-			end})
-			return g
-		end
-	end
-	local oldCreate
-	for _, catName in ipairs({"Blatant","Combat","Utility","Inventory","Render","World","Legit","Kits","Main"}) do
-		local cat = vape.Categories and vape.Categories[catName]
-		if cat and type(cat.CreateModule) == "function" and not cat.__elevateGroupPatched then
-			cat.__elevateGroupPatched = true
-			oldCreate = cat.CreateModule
-			cat.CreateModule = function(self, def)
-				local m = oldCreate(self, def)
-				patchModule(m)
-				return m
+				setmetatable(group, {
+					__index = function(_, k)
+						if k == "Enabled" then
+							return outer and outer.Enabled or false
+						end
+						if k == "CreateToggle" or k == "CreateSlider" or k == "CreateTwoSlider"
+							or k == "CreateDropdown" or k == "CreateTextList" or k == "CreateMultiDropdown"
+							or k == "CreateColorSlider" or k == "CreateTextBox" or k == "CreateButton"
+							or k == "CreateTargets" then
+							return proxy(k)
+						end
+					end
+				})
+				return group
 			end
 		end
+
+		if type(mod.CreateMultiDropdown) ~= "function" then
+			function mod:CreateMultiDropdown(opts)
+				opts = opts or {}
+				local list
+				if type(self.CreateTextList) == "function" then
+					list = self:CreateTextList({
+						Name = opts.Name,
+						Default = opts.Default or {},
+						Darker = opts.Darker,
+						Tooltip = opts.Tooltip
+					})
+				else
+					list = {ListEnabled = opts.Default or {}}
+				end
+				if type(list.Has) ~= "function" then
+					function list:Has(name)
+						for _, v in (self.ListEnabled or {}) do
+							if tostring(v):lower() == tostring(name):lower() then return true end
+						end
+						return false
+					end
+				end
+				return list
+			end
+		end
+
+		-- Ensure TwoSlider always has GetRandomValue
+		if type(mod.CreateTwoSlider) == "function" and not mod.__twoSliderWrapped then
+			mod.__twoSliderWrapped = true
+			local old = mod.CreateTwoSlider
+			mod.CreateTwoSlider = function(self, opts)
+				local s = old(self, opts)
+				if type(s) == "table" and type(s.GetRandomValue) ~= "function" then
+					function s:GetRandomValue()
+						if self.ValueMin ~= nil then return self.ValueMin end
+						return self.Value or 0
+					end
+				end
+				return s
+			end
+		end
+
+		return mod
 	end
+
+	local function patchCategory(cat)
+		if type(cat) ~= "table" or type(cat.CreateModule) ~= "function" or cat.__elevateAetherPatched then return end
+		cat.__elevateAetherPatched = true
+		local old = cat.CreateModule
+		cat.CreateModule = function(self, def)
+			local m = old(self, def)
+			return addMissingAPI(m)
+		end
+	end
+
+	local function patchAll()
+		if not vape or not vape.Categories then return end
+		for _, cat in pairs(vape.Categories) do
+			patchCategory(cat)
+		end
+	end
+	patchAll()
+	-- also patch late-added categories
+	task.spawn(function()
+		for _ = 1, 30 do
+			task.wait(0.1)
+			pcall(patchAll)
+		end
+	end)
 end
 
 
@@ -8680,59 +8785,6 @@ run(function()
 		end
 	end
 	
-	-- Polyfill CreateGroup for Elevate UI differences
-	local function __ensureGroupAPI(mod)
-		if type(mod) ~= "table" then return mod end
-		if type(mod.CreateGroup) ~= "function" then
-			function mod:CreateGroup(opts)
-				opts = opts or {}
-				local g = {
-					Enabled = opts.Default == true,
-					Name = opts.Name,
-					Options = {},
-					CreateSlider = function(self, o)
-						if type(mod.CreateSlider) == "function" then return mod:CreateSlider(o) end
-						return {Value = o and o.Default or 0, SetValue = function() end}
-					end,
-					CreateToggle = function(self, o)
-						if type(mod.CreateToggle) == "function" then return mod:CreateToggle(o) end
-						return {Enabled = o and o.Default or false}
-					end,
-					CreateDropdown = function(self, o)
-						if type(mod.CreateDropdown) == "function" then return mod:CreateDropdown(o) end
-						return {Value = o and o.List and o.List[1]}
-					end,
-					CreateColorSlider = function(self, o)
-						if type(mod.CreateColorSlider) == "function" then return mod:CreateColorSlider(o) end
-						return {Hue=0,Sat=1,Value=1,Opacity=1}
-					end,
-					CreateTextBox = function(self, o)
-						if type(mod.CreateTextBox) == "function" then return mod:CreateTextBox(o) end
-						return {Value = o and o.Default or ""}
-					end,
-					CreateTextList = function(self, o)
-						if type(mod.CreateTextList) == "function" then return mod:CreateTextList(o) end
-						return {ListEnabled = o and o.Default or {}}
-					end,
-					CreateMultiDropdown = function(self, o)
-						if type(mod.CreateMultiDropdown) == "function" then return mod:CreateMultiDropdown(o) end
-						return {Has = function() return false end}
-					end,
-					CreateTwoSlider = function(self, o)
-						if type(mod.CreateTwoSlider) == "function" then return mod:CreateTwoSlider(o) end
-						return {GetRandomValue = function() return o and o.DefaultMin or 0 end}
-					end,
-				}
-				function g:Has() return false end
-				if type(opts.Function) == "function" then
-					task.defer(function() pcall(opts.Function, g.Enabled) end)
-				end
-				return g
-			end
-		end
-		return mod
-	end
-
 	Killaura = vape.Categories.Blatant:CreateModule({
 		Name = "Killaura",
 		Function = function(Callback: boolean)
@@ -9406,7 +9458,6 @@ run(function()
 		end,
 		Tooltip = 'Attacks players around you without aiming'
 	})
-	Killaura = __ensureGroupAPI(Killaura)
 	
 	Targets = Killaura:CreateTargets({
 		Players = true,
@@ -9844,6 +9895,40 @@ run(function()
 
 
 	Targets.Priority = Targets.Priority or {Value = nil}
+
+	-- Defaults if any option failed to create (prevents nil.Enabled crashes)
+	HighHitreg = HighHitreg or {Enabled = true}
+	Hitreg = Hitreg or {Value = "Stable"}
+	AttackSpeed = AttackSpeed or {Value = 0}
+	SwingRange = SwingRange or {Value = 28}
+	AttackRange = AttackRange or {Value = 18.1}
+	AngleSlider = AngleSlider or {Value = 360}
+	MaxTargets = MaxTargets or {Value = 5}
+	Sort = Sort or {Value = "Distance"}
+	SwingTime = SwingTime or {GetRandomValue = function() return 0.11 end, ValueMin = 0.11, ValueMax = 0.11}
+	ContinueSwing = ContinueSwing or {GetRandomValue = function() return 0 end}
+	AirHits = AirHits or {ValueMin = 100, ValueMax = 100}
+	FastHits = FastHits or {Enabled = false}
+	Whitelist = Whitelist or {ListEnabled = {"arrow", "snowball"}}
+	AlsoUse = AlsoUse or {Has = function() return false end}
+	Legit = Legit or {Enabled = false}
+	FireRate = FireRate or {Value = 0.05}
+	Mouse = Mouse or {Enabled = false}
+	AFKCheck = AFKCheck or {Enabled = false}
+	Attackable = Attackable or {Enabled = false}
+	Swing = Swing or {Enabled = false}
+	GUI = GUI or {Enabled = false}
+	Face = Face or {Enabled = false}
+	Animation = Animation or {Enabled = false}
+	AnimationMode = AnimationMode or {Value = "Default"}
+	AnimationSpeed = AnimationSpeed or {Value = 1}
+	AnimationTween = AnimationTween or {Enabled = false}
+	Limit = Limit or {Enabled = false}
+	LegitAura = LegitAura or {Enabled = false}
+	Targets = Targets or {Players = {Enabled = true}, NPCs = {Enabled = true}}
+	if not Targets.Players then Targets.Players = {Enabled = true} end
+	if not Targets.NPCs then Targets.NPCs = {Enabled = true} end
+
 	killauraReady = true
 end)
 

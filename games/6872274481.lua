@@ -7435,290 +7435,7 @@ local Attacking
 
 
 run(function()
-	-- ===== Aether Killaura remote loadstring =====
-	-- https://api.aetherv2.xyz/raw/main/games/6872274481/Blatant/Killaura.lua
-
-	local function __kaNotify(msg)
-		warn("[elevate] " .. tostring(msg))
-	end
-
-	-- swordtiming
-	if type(vape.Libraries.swordtiming) ~= "table" or type(vape.Libraries.swordtiming.Calculate) ~= "function" then
-		local timing = {
-			SafeSpacing = 0.296, HighSpacing = 0.2925, HitFloor = 0.285,
-			GapFloor = 0.2915, ArrivalFloor = 0.2747,
-			CooldownCorrection = (0.017999999225139618 / 10) + 0.013412,
-		}
-		local weaponSpacing = {[0.21]=0.229,[0.25]=0.249,[0.35]=0.345,[0.4]=0.341,[0.6]=0.63}
-		function timing.Calculate(speed, fury, high, budget)
-			speed = tonumber(speed) or 0.3
-			fury = tonumber(fury) or 1
-			budget = tonumber(budget) or 0.2
-			local highOn = high == true or high == "Advanced" or high == "High"
-			local base = highOn and timing.HighSpacing or timing.SafeSpacing
-			local spaced = weaponSpacing[speed] or (speed * 0.95)
-			local scale = math.clamp(fury, 0.5, 1.5)
-			return math.max(base, spaced) * scale, scale, timing.GapFloor * scale, math.clamp(budget, 0.17, 0.34), true
-		end
-		vape.Libraries.swordtiming = timing
-	end
-	if type(vape.Libraries.auraanims) ~= "table" then
-		vape.Libraries.auraanims = { Default = {}, Animations = {}, Normal = {{CFrame = CFrame.Angles(math.rad(-30),0,0), Time = 0.1}, {CFrame = CFrame.new(), Time = 0.1}} }
-	end
-
-	-- StatusEffectUtil
-	do
-		local function makeStub()
-			local util = {}
-			function util.isActive(_, character, effect)
-				if not character then return false end
-				local ok, res = pcall(function()
-					if effect == "frozen" then
-						local untilt = character:GetAttribute("StunnedUntilTime")
-						if untilt and untilt > workspace:GetServerTimeNow() then return true end
-					end
-					if effect == "fury_potion" then
-						if character:GetAttribute("Fury") or character:GetAttribute("fury_potion") then return true end
-					end
-					return false
-				end)
-				return ok and res or false
-			end
-			util.IsActive = util.isActive
-			return util
-		end
-		if type(bedwars) == "table" then
-			local se = rawget(bedwars, "StatusEffectUtil")
-			if type(se) ~= "table" or type(se.isActive) ~= "function" then
-				local loaded
-				pcall(function()
-					loaded = require(game:GetService("ReplicatedStorage").TS.entity["status-effect"]["status-effect-util"]).StatusEffectUtil
-				end)
-				rawset(bedwars, "StatusEffectUtil", (type(loaded) == "table" and loaded) or makeStub())
-			end
-		end
-	end
-
-	-- Handler bridge (Elevate has no bedwars.Handler by default)
-	do
-		local function getNet(Name)
-			local Ok, Object = pcall(function()
-				return bedwars.Client:Get(Name)
-			end)
-			return Ok and Object or nil
-		end
-		local AttackObject
-		if type(bedwars) == "table" then
-			bedwars.Handler = bedwars.Handler or {}
-			local oldGet = bedwars.Handler.Get
-			bedwars.Handler.Get = function(_, Name)
-				if type(oldGet) == "function" then
-					local ok, res = pcall(oldGet, _, Name)
-					if ok and res ~= nil then return res end
-				end
-				if Name == "SwordHit" then
-					return {
-						GetRateLimit = function() return 210 end,
-						Fire = function(_, _, Payload)
-							AttackObject = AttackObject or getNet(remotes.AttackEntity)
-							if not AttackObject then return end
-							local Remote = AttackObject.instance
-							if Remote then Remote:FireServer(Payload) return end
-							store.kaSending = true
-							pcall(AttackObject.SendToServer, AttackObject, Payload)
-							store.kaSending = false
-						end
-					}
-				elseif Name == "ProjectileFire" then
-					return {
-						Fire = function(_, _, ...)
-							local Object = getNet("ProjectileFire")
-							if not Object then return end
-							local Ok, Response = pcall(Object.CallServer, Object, ...)
-							return Ok and Response or nil
-						end
-					}
-				elseif Name == "SwordSwingMiss" then
-					return {
-						Fire = function(_, _, Payload)
-							local Object = getNet("SwordSwingMiss")
-							if Object and Object.SendToServer then pcall(Object.SendToServer, Object, Payload) end
-						end
-					}
-				end
-				return { Fire = function() end, FireServer = function() end, GetRateLimit = function() return 300 end }
-			end
-		end
-	end
-
-	-- bedwarsutil Chest stub (fixes AutoBank nil.Chest)
-	do
-		vape.Libraries = vape.Libraries or {}
-		local util = vape.Libraries.bedwarsutil
-		if type(util) ~= "table" then
-			util = {}
-			vape.Libraries.bedwarsutil = util
-		end
-		util.Chest = util.Chest or {
-			Range = 20,
-			Get = function() return nil end,
-			Take = function() return false end,
-			Remotes = function() return nil end,
-		}
-		util.Shop = util.Shop or {}
-		util.Range = util.Range or { Shop = 20, Chest = 20 }
-	end
-
-	-- CreateGroup polyfill
-	local function addMissingAPI(mod)
-		if type(mod) ~= "table" or mod.__elevateAetherAPI then return mod end
-		mod.__elevateAetherAPI = true
-		if type(mod.CreateGroup) ~= "function" then
-			function mod:CreateGroup(opts)
-				opts = opts or {}
-				local parent = self
-				local outer
-				if opts.Name then
-					outer = parent:CreateToggle({
-						Name = opts.Name, Default = opts.Default == true,
-						Function = opts.Function, Tooltip = opts.Tooltip, Darker = opts.Darker,
-					})
-				end
-				local group = {}
-				local function proxy(method)
-					return function(_, childOpts)
-						childOpts = childOpts or {}
-						childOpts.Darker = true
-						if type(parent[method]) == "function" then return parent[method](parent, childOpts) end
-						if method == "CreateToggle" then return { Enabled = childOpts.Default == true }
-						elseif method == "CreateSlider" then return { Value = childOpts.Default or 0 }
-						elseif method == "CreateTwoSlider" then
-							local o = { ValueMin = childOpts.DefaultMin or 0, ValueMax = childOpts.DefaultMax or 0 }
-							function o:GetRandomValue() return self.ValueMin end
-							return o
-						elseif method == "CreateMultiDropdown" or method == "CreateTextList" then
-							local o = { ListEnabled = childOpts.Default or {} }
-							function o:Has(name)
-								for _, v in (self.ListEnabled or {}) do
-									if tostring(v):lower() == tostring(name):lower() then return true end
-								end
-								return false
-							end
-							return o
-						elseif method == "CreateDropdown" then return { Value = childOpts.List and childOpts.List[1] }
-						elseif method == "CreateColorSlider" then return { Hue = 0, Sat = 1, Value = 1, Opacity = 1 }
-						end
-						return {}
-					end
-				end
-				setmetatable(group, {
-					__index = function(_, k)
-						if k == "Enabled" then return outer and outer.Enabled or false end
-						if type(k) == "string" and k:sub(1, 6) == "Create" then return proxy(k) end
-					end
-				})
-				return group
-			end
-		end
-		if type(mod.CreateMultiDropdown) ~= "function" then
-			function mod:CreateMultiDropdown(opts)
-				opts = opts or {}
-				local list = type(self.CreateTextList) == "function"
-					and self:CreateTextList({ Name = opts.Name, Default = opts.Default or {}, Darker = opts.Darker })
-					or { ListEnabled = opts.Default or {} }
-				if type(list.Has) ~= "function" then
-					function list:Has(name)
-						for _, v in (self.ListEnabled or {}) do
-							if tostring(v):lower() == tostring(name):lower() then return true end
-						end
-						return false
-					end
-				end
-				return list
-			end
-		end
-		return mod
-	end
-
-	local blatant = vape.Categories and vape.Categories.Blatant
-	if blatant and type(blatant.CreateModule) == "function" and not blatant.__elevateAetherPatched then
-		blatant.__elevateAetherPatched = true
-		local oldCM = blatant.CreateModule
-		blatant.CreateModule = function(self, def)
-			local m = oldCM(self, def)
-			if type(m) == "table" then return addMissingAPI(m) end
-			return m
-		end
-	end
-
-	if vape.Modules and vape.Modules.Killaura and not vape.Modules.KillauraOLD then
-		vape.Modules.KillauraOLD = vape.Modules.Killaura
-		pcall(function()
-			if vape.Modules.KillauraOLD.Enabled then vape.Modules.KillauraOLD:Toggle() end
-		end)
-	end
-
-	-- CRITICAL: remote loadstring cannot see Elevate locals — export them to getgenv
-	getgenv().run = run
-	getgenv().vape = vape
-	getgenv().bedwars = bedwars
-	getgenv().store = store
-	getgenv().lplr = lplr
-	getgenv().entitylib = entitylib
-	getgenv().prediction = prediction
-	getgenv().targetinfo = targetinfo
-	getgenv().gameCamera = gameCamera
-	getgenv().tweenService = tweenService
-	getgenv().runService = runService
-	getgenv().inputService = inputService
-	getgenv().remotes = remotes
-	getgenv().getReach = getReach
-	getgenv().getHotbar = rawget(getgenv(), "getHotbar") or getHotbar
-	getgenv().switchItem = switchItem
-	getgenv().hotbarSwitch = hotbarSwitch
-	getgenv().getItem = getItem
-	getgenv().getProjectiles = getProjectiles or function() return {} end
-	getgenv().isAfk = isAfk or function() return false end
-	if type(sortmethods) == "table" then getgenv().sortmethods = sortmethods end
-	if type(sortlist) == "table" then getgenv().sortlist = sortlist end
-
-	local URL = "https://api.aetherv2.xyz/raw/main/games/6872274481/Blatant/Killaura.lua"
-	local okHttp, src = pcall(function()
-		return game:HttpGet(URL)
-	end)
-	if not okHttp or type(src) ~= "string" or #src < 200 then
-		__kaNotify("Aether Killaura HttpGet failed: " .. tostring(src))
-	else
-		local fn, err = loadstring(src, "AetherKillaura")
-		if not fn then
-			__kaNotify("Aether Killaura compile failed: " .. tostring(err))
-		else
-			-- some executors need setfenv to see getgenv values as globals
-			pcall(function()
-				setfenv(fn, setmetatable({}, {
-					__index = function(_, k)
-						local g = getgenv()
-						if g[k] ~= nil then return g[k] end
-						return rawget(_G, k)
-					end
-				}))
-			end)
-			local okRun, runErr = pcall(fn)
-			if not okRun then
-				__kaNotify("Aether Killaura execute failed: " .. tostring(runErr))
-			else
-				if vape.Modules and vape.Modules.Killaura then
-					addMissingAPI(vape.Modules.Killaura)
-				end
-				print("[elevate] Aether Killaura loaded from api.aetherv2.xyz")
-			end
-		end
-	end
-
-	-- Skip old embedded Killaura body
-	do return end
-
-	-- dead code kept for structure
+	-- Elevate compat: this base has no bedwars.Handler, swordtiming, StatusEffectUtil, etc.
 	local bedwars = setmetatable({}, {__index = bedwars})
 	local function getNet(Name)
 		local Ok, Object = pcall(function()
@@ -7817,25 +7534,27 @@ run(function()
 		table.sort(sortlist)
 	end
 
-	-- Used only when the real swordtiming library is missing (same constants as SilentAura).
+	-- Faster hitreg fallback (tighter spacing = more attacks / better vs dodge)
 	local SwordTimingFallback = {
-		SafeSpacing = 0.295,
-		HighSpacing = 0.285,
-		HitFloor = 0.292,
-		GapFloor = 0.2965,
-		ArrivalFloor = 0.274,
-		CooldownCorrection = (0.017999999225139618 / 10) + 0.013412
+		SafeSpacing = 0.275,
+		HighSpacing = 0.255,
+		HitFloor = 0.26,
+		GapFloor = 0.265,
+		ArrivalFloor = 0.24,
+		CooldownCorrection = (0.017999999225139618 / 10) + 0.018
 	}
-	local WeaponSpacing = {[0.21] = 0.229, [0.25] = 0.249, [0.35] = 0.345, [0.4] = 0.341, [0.6] = 0.63}
+	local WeaponSpacing = {[0.21] = 0.205, [0.25] = 0.225, [0.35] = 0.31, [0.4] = 0.31, [0.6] = 0.55}
 	function SwordTimingFallback.Calculate(SwordSpeed, Fury, High, Budget)
 		local Stock = SwordSpeed == 0.3
 		local Normal = High and SwordTimingFallback.HighSpacing or SwordTimingFallback.SafeSpacing
-		local Spacing = Stock and Normal or WeaponSpacing[SwordSpeed] or SwordSpeed + 0.03
-		Spacing = math.max(Spacing * Fury, Budget or 0)
+		local Spacing = Stock and Normal or WeaponSpacing[SwordSpeed] or SwordSpeed * 0.92
+		-- Prefer speed over waiting on rate-limit budget
+		local minBudget = math.min(Budget or 0.2, 0.18)
+		Spacing = math.max(Spacing * Fury, minBudget * 0.85)
 		local Scale = Spacing / (Stock and Normal or SwordTimingFallback.SafeSpacing)
 		local Gap = (Scale < 1 and SwordTimingFallback.GapFloor or SwordTimingFallback.HitFloor) * Scale
 		if Stock and High then
-			Gap = math.max(Gap, SwordTimingFallback.GapFloor, Budget or 0)
+			Gap = math.max(Gap * 0.92, SwordTimingFallback.GapFloor * 0.95, minBudget * 0.8)
 		end
 		return Spacing, Scale, Gap, math.max(SwordSpeed * Fury - SwordTimingFallback.CooldownCorrection, 0), Stock
 	end
@@ -7849,7 +7568,9 @@ run(function()
 	local TargetInfo = targetinfo
 	local getTinkerMount = bedwars.getTinkerMount
 	local watchProjectile = bedwars.watchProjectile
-	local SwordTiming = vape.Libraries.swordtiming or SwordTimingFallback
+	-- Always use tuned fallback for faster hitreg (ignores slower library if present)
+	local SwordTiming = SwordTimingFallback
+	vape.Libraries.swordtiming = SwordTimingFallback
 	local Killaura
 	local Targets
 	local Sort
@@ -7906,24 +7627,24 @@ run(function()
 	local TransitSamples: {number} = {}
 	local TransitRecent: {number} = {}
 	local HitregTiming = {
-		Window = 8,
-		FloorWindow = 32,
-		ExcessCap = 0.25,
+		Window = 6,
+		FloorWindow = 24,
+		ExcessCap = 0.18,
 		Spread = 0,
-		Noise = 0.03,
+		Noise = 0.02,
 		Margin = 0,
 		AlignFrames = false,
 		MatchTransit = true,
 		Peak = 0,
 		PeakUntil = 0,
-		MarginHold = 2,
+		MarginHold = 1.2,
 		MinimumMargin = 0,
 		ColdMargin = 0,
 		BootSamples = 0,
-		FrameBootSamples = 2,
-		LatencyScale = 1,
-		RecoveryCap = 0,
-		RecoveryStep = 0.015
+		FrameBootSamples = 1,
+		LatencyScale = 0.85,
+		RecoveryCap = 0.04,
+		RecoveryStep = 0.008
 	}
 	local function GetHitLifetime(): number
 		return math.max(2, LocalPlayer:GetNetworkPing() * 2 + 0.3, (ConfirmMin or 0) + HitregTiming.Spread + 0.5)
@@ -7937,19 +7658,20 @@ run(function()
 	local SwordSwingMiss = {FireServer = function() end}
 	local ProjectileRemote = bedwars.Handler:Get("ProjectileFire")
 	local FastHitPending, LastShot = nil, 0
-	local ArrivalFloor: number = SwordTiming.ArrivalFloor
-	local HitBudget, HitFloor, GapFloor = 0.2, SwordTiming.HitFloor, SwordTiming.GapFloor
-	local CleanFloor: number = SwordTiming.HighSpacing
-	local TargetLag: number = 0.12
-	local SelfLag: number = 0.09
-	local SelfLagLow: number = 0.07
-	local SelfLagHigh: number = 0.11
-	local ClaimLag: number = 0.05
-	local ServerReach: number = 3.6
-	local RangeMargin: number = 0.4
-	local ClaimMargin: number = 1
-	local LagCap: number = 8
-	local TrailLength: number = 0.3
+	local ArrivalFloor: number = SwordTiming.ArrivalFloor or 0.24
+	-- Lower HitBudget = higher attacks/sec (clamped against remote rate limit later)
+	local HitBudget, HitFloor, GapFloor = 0.17, SwordTiming.HitFloor or 0.26, SwordTiming.GapFloor or 0.265
+	local CleanFloor: number = SwordTiming.HighSpacing or 0.255
+	local TargetLag: number = 0.08
+	local SelfLag: number = 0.06
+	local SelfLagLow: number = 0.045
+	local SelfLagHigh: number = 0.08
+	local ClaimLag: number = 0.035
+	local ServerReach: number = 3.8
+	local RangeMargin: number = 0.25
+	local ClaimMargin: number = 0.75
+	local LagCap: number = 10
+	local TrailLength: number = 0.25
 	local TrailTimes: {number} = {}
 	local TrailPositions: {Vector3} = {}
 	local SelfReference = {Low = Vector3.zero, High = Vector3.zero, Claim = Vector3.zero}
@@ -8075,7 +7797,15 @@ run(function()
 	task.spawn(function()
 		AttackRemote = bedwars.Handler:Get("SwordHit")
 		SwordSwingMiss = bedwars.Handler:Get("SwordSwingMiss")
-		HitBudget = 60 / AttackRemote:GetRateLimit()
+		local ok, rate = pcall(function()
+			return AttackRemote:GetRateLimit()
+		end)
+		-- Clamp so rate-limit doesn't force slow 0.28+ spacing
+		if ok and type(rate) == "number" and rate > 0 then
+			HitBudget = math.clamp(60 / rate, 0.155, 0.20)
+		else
+			HitBudget = 0.17
+		end
 	end)
 	
 	local FireRates: {[string]: number} = {}

@@ -7625,15 +7625,15 @@ run(function()
 	local HitregTiming = {
 		Window = 8,
 		FloorWindow = 32,
-		ExcessCap = 0.25,
+		ExcessCap = 0, -- was 0.25 — growing HitDeadline caused fast-then-pause
 		Spread = 0,
 		Noise = 0.03,
 		Margin = 0,
 		AlignFrames = false,
-		MatchTransit = true,
+		MatchTransit = false, -- transit learning was slowing swings after first hits
 		Peak = 0,
 		PeakUntil = 0,
-		MarginHold = 2,
+		MarginHold = 0,
 		MinimumMargin = 0,
 		ColdMargin = 0,
 		BootSamples = 0,
@@ -8018,7 +8018,8 @@ run(function()
 								end
 								TransitMin = math.min(TransitMin and (TransitMin + 0.001) or Transit, Transit)
 								ConfirmMin = math.min(ConfirmMin and (ConfirmMin + 0.001) or Confirmation, Confirmation)
-								HitDeadline = math.max(HitDeadline, Entry.sent + Entry.gap + math.clamp(Transit - TransitFloor, 0, HitregTiming.ExcessCap))
+								-- Do not push HitDeadline forward (was: fast start, then long pauses)
+								HitDeadline = 0
 								for _ = 1, Selected do
 									table.remove(HitPending, 1)
 								end
@@ -8188,21 +8189,11 @@ run(function()
 								local SwordSpeed: number = SwordMeta and SwordMeta.sword and SwordMeta.sword.attackSpeed or 0.3
 								local Spacing, SpeedScale, GapMin, AttackCooldown, Stock = SwordTiming.Calculate(SwordSpeed, FuryMultiplier, HighHitreg.Enabled, HitBudget)
 								local Quantized: boolean = Stock and HighHitreg.Enabled and Hitreg.Value ~= "Burst" and HitregTiming.AlignFrames and FrameTime > 1 / 30
-								local Variation: number = math.max(HitregTiming.Spread, tick() < HitregTiming.PeakUntil and HitregTiming.Peak or 0)
+								local Variation: number = 0
 								local Margin: number = 0
-								if Stock and HighHitreg.Enabled and Hitreg.Value ~= "Burst" then
-									local Reserve: number = Quantized and FrameTime * 0.5 or 0
-									local Minimum: number = not Quantized and HitregTiming.MinimumMargin or 0
-									local BootSamples: number = Quantized and math.min(HitregTiming.BootSamples, HitregTiming.FrameBootSamples) or HitregTiming.BootSamples
-									local Warmup: number = #TransitSamples < BootSamples and (HitregTiming.ColdMargin + Reserve) or 0
-									local AlignedSpacing: number = math.ceil(Spacing / FrameTime) * FrameTime
-									local Latency: number = Quantized and ConfirmMin and ConfirmMin >= Spacing and AlignedSpacing < (HitFloor * SpeedScale + 0.05) and FrameTime or 0
-									local Scale: number = ConfirmMin and ConfirmMin >= (Spacing * 2) and HitregTiming.LatencyScale or 1
-									local Jitter: number = Variation > HitregTiming.Noise and math.clamp(Variation * Scale - math.max(Spacing - HitFloor * SpeedScale, 0) + Reserve, 0, HitregTiming.Margin) or 0
-									Margin = math.max(Minimum, Warmup, Latency, Jitter)
-								end
+								-- Adaptive margin/transit disabled (caused fast start then long pauses)
 								if Stock and HighHitreg.Enabled then
-									GapMin = math.max(GapMin + Margin, AttackSpeed.Value)
+									GapMin = math.max(GapMin, AttackSpeed.Value)
 								end
 								local Band: number = (HighHitreg.Enabled and 10 / 34 or 10 / 33) * SpeedScale
 								local BandFloor: number = math.max(HighHitreg.Enabled and 10 / 35 or 10 / 34, CleanFloor) * SpeedScale
@@ -8300,9 +8291,9 @@ run(function()
 	
 									ServerNow = ServerNow or workspace:GetServerTimeNow()
 									local GameCooldown: number = math.max((bedwars.SwordController.lastAttack + AttackCooldown) - ServerNow, 0)
-									-- GhostDelay forced out of the schedule (was causing stop-hit-stop stutter)
-									local HitDelay: number = Hitreg.Value == "Burst" and math.max(AttackSpeed.Value, BurstWait) or math.max(HitBudget, Spacing + Margin, AttackSpeed.Value, GameCooldown)
-									local Deadline: number = math.max(SwingCooldown + HitDelay, LastHit + GapMin, tick() + GameCooldown)
+									-- Steady pace only (no ghost/margin/deadline creep after first hits)
+									local HitDelay: number = Hitreg.Value == "Burst" and math.max(AttackSpeed.Value, BurstWait) or math.max(HitBudget, Spacing, AttackSpeed.Value, GameCooldown)
+									local Deadline: number = math.max(LastHit + math.max(GapMin, HitDelay), tick() + GameCooldown)
 									local Tracked: boolean = false
 									if Hitreg.Value ~= "Burst" then
 										Tracked = CombatCache.Tracked[v.Character] or type(v.Character:GetAttribute("LastDamageTakenTime")) == "number"
@@ -8311,11 +8302,6 @@ run(function()
 										end
 									end
 									local Waiting = false
-									-- Only apply HitDeadline if it's not far in the future (prevents multi-frame freezes)
-									if Tracked and HitDeadline > 0 then
-										local hd = math.min(HitDeadline, tick() + HitDelay + 0.02)
-										Deadline = math.max(Deadline, hd)
-									end
 									local Remaining: number = Deadline - tick()
 									if Precise and not Waiting and Remaining > 0 and Remaining < math.min(FrameTime, FrameStep, 0.003) then
 										local Finish: number = os.clock() + Remaining
@@ -8347,7 +8333,8 @@ run(function()
 										LastAttack = tick()
 										store.attackReach = (Delta.Magnitude * 100) // 1 / 100
 										store.attackReachUpdate = tick() + 1
-										SwingCooldown = math.max(SwingCooldown + HitDelay, tick() - (Stock and HighHitreg.Enabled and Hitreg.Value ~= "Burst" and math.min(FrameTime, HitDelay - HitFloor * SpeedScale) or 0))
+										-- Keep swing clock near real time (old SwingCooldown+HitDelay could run ahead and pause)
+										SwingCooldown = tick()
 										LastHit = tick()
 										if Hitreg.Value == "Burst" then
 											BurstShots += 1
@@ -8480,15 +8467,28 @@ run(function()
 						end
 	
 						do
-							-- Clear expired pending flags but NEVER stack GhostDelay (stop-hit-stop fix)
+							local Ghosted: boolean = false
+							local Recovery: boolean = HighHitreg.Enabled and Hitreg.Value ~= "Burst" and SwordMeta and SwordMeta.sword and SwordMeta.sword.attackSpeed == 0.3 and HitregTiming.RecoveryCap > 0 or false
 							if #Attacked == 0 then
 								table.clear(GhostPending)
 							end
 							while GhostPending[1] and tick() > GhostPending[1] do
 								table.remove(GhostPending, 1)
+								Ghosted = true
 							end
-							GhostDelay = 0
-							GhostCount = 0
+	
+							if Ghosted then
+								GhostCount = (tick() < GhostWindow and GhostCount or 0) + 1
+								GhostWindow = tick() + 5
+								if GhostCount > (Recovery and 0 or 1) and tick() > GhostStep then
+									GhostStep = tick() + 1
+									GhostHold = tick() + (Recovery and HitregTiming.MarginHold or HighHitreg.Enabled and 2 or 10)
+									GhostDelay = math.min(GhostDelay + (Recovery and HitregTiming.RecoveryStep or HighHitreg.Enabled and 0.001 or 0.003), Recovery and HitregTiming.RecoveryCap or HighHitreg.Enabled and (10 / 34 - CleanFloor) or 0.1)
+								end
+							elseif GhostDelay > 0 and tick() > GhostHold then
+								GhostHold = tick() + (Recovery and HitregTiming.MarginHold or HighHitreg.Enabled and 2 or 10)
+								GhostDelay = math.max(GhostDelay - (HighHitreg.Enabled and 0.001 or 0.003), 0)
+							end
 						end
 	
 						if #Attacked > 0 then

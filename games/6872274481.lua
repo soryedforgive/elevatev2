@@ -7816,7 +7816,7 @@ run(function()
 					oldAura:Toggle()
 				end
 
-				local PreviousSwing = bedwars.SwordController.playSwordEffect
+				local PreviousSwing = bedwars.SwordController and bedwars.SwordController.playSwordEffect
 				local Current = {}
 				local Hook
 				Session = Current
@@ -7829,29 +7829,41 @@ run(function()
 				HitregTiming.PeakUntil = 0
 				OldSwing = PreviousSwing
 				Hook = function(self, SwordMeta, Charged, Config)
-					if not Killaura.Enabled or SwingHook ~= Hook then
-						return PreviousSwing(self, SwordMeta, Charged, Config)
-					end
-					if Config and Config.playAnimation == false then
-						return PreviousSwing(self, SwordMeta, Charged, Config)
-					end
-					if LegitAura.Enabled then
-						local Clicked: number = bedwars.SwordController.lastSwing
-						if (tick() - LastAttack) < 0.4 and Clicked == EffectSwing then
-							return
-						end
-						EffectSwing = Clicked
-						return PreviousSwing(self, SwordMeta, Charged, Config)
-					end
-					if ((tick() - LastAttack) < 0.4 or (tick() - AnimDelay) < 0.4) and (tick() - LastEffect) < SwingGap then
+					local base = OldSwing or PreviousSwing
+					if type(base) ~= "function" then
 						return
 					end
+					-- never swallow swings (was returning nil and breaking the sword)
+					if not Killaura.Enabled or SwingHook ~= Hook then
+						return base(self, SwordMeta, Charged, Config)
+					end
+					if Config and Config.playAnimation == false then
+						return base(self, SwordMeta, Charged, Config)
+					end
+					if LegitAura and LegitAura.Enabled then
+						local Clicked = bedwars.SwordController and bedwars.SwordController.lastSwing or 0
+						EffectSwing = Clicked
+						return base(self, SwordMeta, Charged, Config)
+					end
+					if ((tick() - LastAttack) < 0.4 or (tick() - AnimDelay) < 0.4) and (tick() - LastEffect) < SwingGap then
+						return base(self, SwordMeta, Charged, Config)
+					end
 					LastEffect = tick()
-					SwingGap = math.max(SwingTime:GetRandomValue(), 0.09)
-					return PreviousSwing(self, SwordMeta, Charged, Config)
+					local gap = 0.09
+					pcall(function()
+						if SwingTime and SwingTime.GetRandomValue then
+							gap = math.max(SwingTime:GetRandomValue(), 0.09)
+						elseif SwingTime and SwingTime.Value then
+							gap = math.max(tonumber(SwingTime.Value) or 0.09, 0.09)
+						end
+					end)
+					SwingGap = gap
+					return base(self, SwordMeta, Charged, Config)
 				end
 				SwingHook = Hook
-				bedwars.SwordController.playSwordEffect = SwingHook
+				if bedwars.SwordController and type(PreviousSwing) == "function" then
+					bedwars.SwordController.playSwordEffect = SwingHook
+				end
 	
 				Killaura:Clean(vapeEvents.EntityDamageEvent.Event:Connect(function(DamageTable)
 					if DamageTable.fromEntity == LocalPlayer.Character and DamageTable.damageType == 0 and DamageTable.entityInstance then
@@ -8486,9 +8498,19 @@ run(function()
 		NPCs = true
 	})
 	local Methods: {string} = {"Damage", "Distance"}
-	for _, v: string in sortlist do
-		if not table.find(Methods, v) then
-			table.insert(Methods, v)
+	do
+		local list = (type(getSortList) == "function" and getSortList(Methods)) or Methods
+		if type(sortmethods) == "table" then
+			for name in pairs(sortmethods) do
+				if not table.find(list, name) then
+					table.insert(list, name)
+				end
+			end
+		end
+		for _, v in ipairs(list) do
+			if not table.find(Methods, v) then
+				table.insert(Methods, v)
+			end
 		end
 	end
 	SwingRange = Killaura:CreateSlider({
@@ -19819,7 +19841,7 @@ run(function()
 	})
 	Sort = LagbackAura:CreateDropdown({
 		Name = 'Target Mode',
-		List = sortlist
+		List = (type(getSortList) == "function" and getSortList({"Damage", "Distance"})) or {"Damage", "Distance", "Health", "Threat", "Angle", "Cursor"}
 	})
 end)
 
@@ -22917,7 +22939,9 @@ run(function()
 		Min = 1,
 		Max = 30,
 		Default = (util.Chest and util.Chest.Range) or 20,
-		Suffix = util.Studs,
+		Suffix = (type(util.Studs) == "function" and util.Studs) or function(val)
+			return val == 1 and "stud" or "studs"
+		end,
 		Tooltip = 'How close to your personal chest you need to be'
 	})
 	Withdraw = AutoBank:CreateToggle({
@@ -57060,7 +57084,12 @@ run(function()
     local NoSlow
     local StackMode
     
-    local Legit = (bedwars.DragonSlayerController and bedwars.DragonSlayerController.hasEligiblePunchTarget and getFunctionRange(bedwars.DragonSlayerController.hasEligiblePunchTarget)) or 14.4
+        local Legit = 14.4
+    pcall(function()
+        if type(getFunctionRange) == "function" and bedwars.DragonSlayerController and bedwars.DragonSlayerController.hasEligiblePunchTarget then
+            Legit = getFunctionRange(bedwars.DragonSlayerController.hasEligiblePunchTarget) or 14.4
+        end
+    end)
     local modifier, old
     local noSlowUntil = 0
     

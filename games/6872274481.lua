@@ -7444,64 +7444,7 @@ run(function()
 	local TargetInfo = targetinfo
 	local getTinkerMount = bedwars.getTinkerMount
 	local watchProjectile = bedwars.watchProjectile
-	-- Inline SwordTiming (do not use vape.Libraries.swordtiming — Elevate's copy is often wrong/mismatched)
-	local WeaponSpacing = {
-		[0.21] = 0.229,
-		[0.25] = 0.249,
-		[0.35] = 0.345,
-		[0.4] = 0.341,
-		[0.6] = 0.63,
-	}
-	local SwordTiming = {
-		SafeSpacing = 0.295,
-		HighSpacing = 0.285,
-		HitFloor = 0.292,
-		GapFloor = 0.2965,
-		ArrivalFloor = 0.274,
-		CooldownCorrection = (0.017999999225139618 / 10) + 0.013412,
-	}
-	-- Matches Killaura call: Calculate(SwordSpeed, FuryMultiplier, HighHitreg.Enabled, HitBudget)
-	function SwordTiming.Calculate(Speed, FuryMultiplier, HighEnabled, Budget, Hits)
-		local HighMode
-		local fury = 1
-		if type(FuryMultiplier) == "string" then
-			-- Alternate API: Calculate(Speed, HighMode, DynamicDelay, Budget, Hits)
-			HighMode = FuryMultiplier
-			if type(HighEnabled) == "number" then
-				-- DynamicDelay passed as third
-			elseif type(HighEnabled) == "boolean" then
-				HighMode = HighEnabled and "Advanced Mode" or HighMode
-			end
-		else
-			fury = type(FuryMultiplier) == "number" and FuryMultiplier or 1
-			if HighEnabled == true or HighEnabled == "Advanced Mode" or HighEnabled == "Dynamic" then
-				HighMode = "Advanced Mode"
-			elseif HighEnabled == "Dynamic" then
-				HighMode = "Dynamic"
-			else
-				HighMode = "Stealth Mode"
-			end
-		end
-		local Stock = type(Speed) == "number" and math.abs(Speed - 0.3) < 0.001
-		local Normal = (HighMode == "Advanced Mode" or HighMode == "Dynamic") and SwordTiming.HighSpacing or SwordTiming.SafeSpacing
-		local Spacing = Stock and Normal or WeaponSpacing[Speed] or ((type(Speed) == "number" and Speed + 0.03) or Normal)
-		if type(fury) == "number" and fury > 0 and fury ~= 1 then
-			Spacing = Spacing * fury
-		end
-		if HighMode == "Dynamic" and type(HighEnabled) == "number" then
-			Spacing = math.max(Spacing * (HighEnabled / 100), Budget or 0)
-		end
-		if Hits and Hits ~= 35 then
-			Spacing = math.max(Spacing, 10 / math.max(Hits - 1, 1))
-		end
-		Spacing = math.max(Spacing, Budget or 0)
-		local Scale = Spacing / (Stock and Normal or SwordTiming.SafeSpacing)
-		local Gap = (Scale < 1 and SwordTiming.GapFloor or SwordTiming.HitFloor) * Scale
-		if Stock and (HighMode == "Advanced Mode" or HighMode == "Dynamic") then
-			Gap = math.max(Gap, SwordTiming.GapFloor, Budget or 0)
-		end
-		return Spacing, Scale, Gap, math.max((type(Speed) == "number" and Speed or 0.3) - SwordTiming.CooldownCorrection, 0), Stock
-	end
+	local SwordTiming = vape.Libraries.swordtiming
 	local Killaura
 	local Targets
 	local Sort
@@ -7607,7 +7550,10 @@ run(function()
 	local SelfReference = {Low = Vector3.zero, High = Vector3.zero, Claim = Vector3.zero}
 	local BurstShots, BurstWait = 0, 0
 	local FuryScale: number = 1 - ((bedwars.BlackMarketeerBalance and bedwars.BlackMarketeerBalance.FURY_POTION_ATTACK_SPEED_MULTIPLIER or 0.5) - 1)
-	local SwordEffect = getmetatable(bedwars.SwordController).__index.playSwordEffect
+	local SwordEffect = (function()
+		local Meta = getmetatable(bedwars.SwordController)
+		return Meta and type(Meta.__index) == "table" and Meta.__index.playSwordEffect or bedwars.SwordController.playSwordEffect
+	end)()
 	local ScanInterval: number = 1 / 75
 	local FlatScale: Vector3 = Vector3.new(1, 0, 1)
 	local ParkedPosition: Vector3 = Vector3.new(9e9, 9e9, 9e9)
@@ -7632,7 +7578,7 @@ run(function()
 		if Parent and RootPart then
 			local RootParent: Instance? = RootPart.Parent
 			if (RootParent == Character or RootParent ~= nil and RootPart:IsDescendantOf(Character))
-				and Ent.Health > 0 and Ent.Targetable and Entity.isVulnerable(Ent) then
+				and Ent.Health > 0 and Ent.Targetable and (Entity.isVulnerable == nil or Entity.isVulnerable(Ent)) then
 				local Now: number = os.clock()
 				local Checked = CombatCache.Static[Character]
 				if not Checked then
@@ -7969,8 +7915,8 @@ run(function()
 							}
 						}
 					}
-					debug.setupvalue(SwordEffect, 7, FakeKnit)
-					debug.setupvalue(bedwars.ScytheController.playLocalAnimation, 3, FakeKnit)
+					pcall(debug.setupvalue, SwordEffect, 7, FakeKnit)
+					pcall(debug.setupvalue, bedwars.ScytheController.playLocalAnimation, 3, FakeKnit)
 	
 					task.spawn(function()
 						local Started: boolean = false
@@ -8494,8 +8440,8 @@ run(function()
 					v.Parent = nil
 					ParticleShown[v] = false
 				end
-				debug.setupvalue(SwordEffect, 7, bedwars.Knit)
-				debug.setupvalue(bedwars.ScytheController.playLocalAnimation, 3, bedwars.Knit)
+				pcall(debug.setupvalue, SwordEffect, 7, bedwars.Knit)
+				pcall(debug.setupvalue, bedwars.ScytheController.playLocalAnimation, 3, bedwars.Knit)
 				if bedwars.SwordController.playSwordEffect == SwingHook then
 					bedwars.SwordController.playSwordEffect = OldSwing
 				end
@@ -8608,12 +8554,18 @@ run(function()
 			Data.Enabled = true
 		end
 	
-		LoadHighHitreg(self, Data)
+		if LoadHighHitreg then
+			LoadHighHitreg(self, Data)
+		end
 	end
 	
 	function HighHitreg:Save(Data)
-		SaveHighHitreg(self, Data)
-		Data[self.Name].Version = 1
+		if SaveHighHitreg then
+			SaveHighHitreg(self, Data)
+		end
+		if Data[self.Name] then
+			Data[self.Name].Version = 1
+		end
 	end
 	Hitreg = {Value = "Stable"}
 	MaxTargets = Killaura:CreateSlider({
@@ -8947,7 +8899,6 @@ run(function()
 		Name = "Swing only",
 		Tooltip = "Only attacks while swinging manually"
 	})
-
 
 	Targets.Priority = Targets.Priority or {Value = nil}
 	killauraReady = true

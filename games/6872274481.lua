@@ -4603,7 +4603,7 @@ run(function()
 					local hand = store.hand
 					if entitylib.isAlive
 						and hand and hand.tool and hand.toolType == 'sword'
-						and not (bedwars.DaoController and bedwars.DaoController.chargingMaid)
+						and not (bedwars.DaoController and (bedwars.DaoController and bedwars.DaoController.chargingMaid))
 						and not bedwars.AppController:isLayerOpen(bedwars.UILayers.MAIN) then
 						local meta = bedwars.ItemMeta[hand.tool.Name]
 						local range = meta and meta.sword and meta.sword.attackRange or 14.4
@@ -7957,7 +7957,7 @@ run(function()
 				end
 	
 				local BoxData = {}
-				local FrameCount, FrameWindow, FrameTime = 0, tick(), HighHitreg.Enabled and RunService.Heartbeat:Wait() or 1 / 240
+				local FrameCount, FrameWindow, FrameTime = 0, tick(), (HighHitreg and HighHitreg.Enabled) and RunService.Heartbeat:Wait() or 1 / 240
 				local FrameStep: number = FrameTime
 				if not Killaura.Enabled or Session ~= Current then
 					return
@@ -8001,16 +8001,16 @@ run(function()
 							Blocked = not Entity.isAlive
 								or (LocalPlayer.Character:GetAttribute("StunnedUntilTime") or 0) > workspace:GetServerTimeNow()
 								or LocalPlayer.Character:FindFirstChild("elk") ~= nil
-								or bedwars.StatusEffectUtil:isActive(LocalPlayer.Character, "frozen")
+								or (function(char, effect) local u = bedwars.StatusEffectUtil if not u or type(u.isActive) ~= "function" then return false end return u:isActive(char, effect) end)(LocalPlayer.Character, "frozen")
 						end
 	
 						if not Blocked then
 							Sword = (Limit and Limit.Enabled) and store.hand or store.tools.sword
 							if not Sword or not Sword.tool then
 								Sword = nil
-							elseif (Limit and Limit.Enabled) and (store.hand.toolType ~= "sword" or bedwars.DaoController.chargingMaid) then
+							elseif (Limit and Limit.Enabled) and (store.hand.toolType ~= "sword" or (bedwars.DaoController and bedwars.DaoController.chargingMaid)) then
 								Sword = nil
-							elseif (LegitAura and LegitAura.Enabled) and (tick() - bedwars.SwordController.lastSwing) > 0.2 then
+							elseif (LegitAura and LegitAura.Enabled) and (tick() - ((bedwars.SwordController and bedwars.SwordController.lastSwing) or 0)) > 0.2 then
 								Sword = nil
 							else
 								SwordMeta = bedwars.ItemMeta[Sword.tool.Name]
@@ -8024,7 +8024,7 @@ run(function()
 							TrackTrail((store.rootpart or Root).Position, os.clock())
 							if not Entity.isAlive or (os.clock() - ScanClock) >= ScanInterval then
 								ScanSettings.Origin = Root.Position
-								ScanSettings.Range = SwingRange.Value
+								ScanSettings.Range = ((SwingRange and SwingRange.Value) or 18)
 								ScanSettings.Wallcheck = Targets and Targets.Walls and Targets.Walls.Enabled or nil
 								ScanSettings.Part = "RootPart"
 								ScanSettings.Players = not Targets or not Targets.Players or Targets.Players.Enabled
@@ -8043,13 +8043,21 @@ run(function()
 								UpdateSelfReference(os.clock(), SendPosition)
 								local LocalFacing: Vector3 = Root.CFrame.LookVector * FlatScale
 								local DisplayName: string = SwordMeta and SwordMeta.displayName or ""
-								local FuryMultiplier: number = bedwars.StatusEffectUtil:isActive(LocalPlayer.Character, "fury_potion") and FuryScale or 1
+								local FuryMultiplier: number = (function(char, effect) local u = bedwars.StatusEffectUtil if not u or type(u.isActive) ~= "function" then return false end return u:isActive(char, effect) end)(LocalPlayer.Character, "fury_potion") and FuryScale or 1
 								local SwordSpeed: number = SwordMeta and SwordMeta.sword and SwordMeta.sword.attackSpeed or 0.3
-								local Spacing, SpeedScale, GapMin, AttackCooldown, Stock = SwordTiming.Calculate(SwordSpeed, FuryMultiplier, HighHitreg.Enabled, HitBudget)
-								local Quantized: boolean = Stock and HighHitreg.Enabled and Hitreg.Value ~= "Burst" and HitregTiming.AlignFrames and FrameTime > 1 / 30
+								local Spacing, SpeedScale, GapMin, AttackData, Stock = 0.3, 1, 0.11, nil, false
+								if type(SwordTiming) == "table" and type(SwordTiming.Calculate) == "function" then
+									local ok, a, b, c, d, e = pcall(function()
+										return SwordTiming.Calculate(SwordSpeed, FuryMultiplier, (HighHitreg and HighHitreg.Enabled), HitBudget)
+									end)
+									if ok then
+										Spacing, SpeedScale, GapMin, AttackData, Stock = a or 0.3, b or 1, c or 0.11, d, e
+									end
+								end
+								local Quantized: boolean = Stock and (HighHitreg and HighHitreg.Enabled) and ((Hitreg and Hitreg.Value) or "Normal") ~= "Burst" and HitregTiming.AlignFrames and FrameTime > 1 / 30
 								local Variation: number = math.max(HitregTiming.Spread, tick() < HitregTiming.PeakUntil and HitregTiming.Peak or 0)
 								local Margin: number = 0
-								if Stock and HighHitreg.Enabled and Hitreg.Value ~= "Burst" then
+								if Stock and (HighHitreg and HighHitreg.Enabled) and ((Hitreg and Hitreg.Value) or "Normal") ~= "Burst" then
 									local Reserve: number = Quantized and FrameTime * 0.5 or 0
 									local Minimum: number = not Quantized and HitregTiming.MinimumMargin or 0
 									local BootSamples: number = Quantized and math.min(HitregTiming.BootSamples, HitregTiming.FrameBootSamples) or HitregTiming.BootSamples
@@ -8060,16 +8068,16 @@ run(function()
 									local Jitter: number = Variation > HitregTiming.Noise and math.clamp(Variation * Scale - math.max(Spacing - HitFloor * SpeedScale, 0) + Reserve, 0, HitregTiming.Margin) or 0
 									Margin = math.max(Minimum, Warmup, Latency, Jitter)
 								end
-								if Stock and HighHitreg.Enabled then
-									GapMin = math.max(GapMin + GhostDelay + Margin, AttackSpeed.Value)
+								if Stock and (HighHitreg and HighHitreg.Enabled) then
+									GapMin = math.max(GapMin + GhostDelay + Margin, ((AttackSpeed and AttackSpeed.Value) or 0))
 								end
-								local Band: number = (HighHitreg.Enabled and 10 / 34 or 10 / 33) * SpeedScale
-								local BandFloor: number = math.max(HighHitreg.Enabled and 10 / 35 or 10 / 34, CleanFloor) * SpeedScale
+								local Band: number = ((HighHitreg and HighHitreg.Enabled) and 10 / 34 or 10 / 33) * SpeedScale
+								local BandFloor: number = math.max((HighHitreg and HighHitreg.Enabled) and 10 / 35 or 10 / 34, CleanFloor) * SpeedScale
 								local Frames: number = math.floor(Band / FrameTime)
 								if Stock and (math.ceil(Spacing / FrameTime) * FrameTime) > Band and (Frames * FrameTime) >= BandFloor then
 									Spacing = math.max((Frames * FrameTime) - (FrameTime * 0.5), GapFloor * SpeedScale)
 								end
-								local Precise: boolean = Stock and HighHitreg.Enabled and Hitreg.Value ~= "Burst" and not Quantized and (math.ceil(Spacing / FrameTime) * FrameTime) > Band
+								local Precise: boolean = Stock and (HighHitreg and HighHitreg.Enabled) and ((Hitreg and Hitreg.Value) or "Normal") ~= "Burst" and not Quantized and (math.ceil(Spacing / FrameTime) * FrameTime) > Band
 								local Reach: number = getReach(Sword.tool)
 								local RangeLimit: number = GetRangeLimit(Reach)
 	
@@ -8158,17 +8166,17 @@ run(function()
 	
 									ServerNow = ServerNow or workspace:GetServerTimeNow()
 									local GameCooldown: number = math.max((bedwars.SwordController.lastAttack + AttackCooldown) - ServerNow, 0)
-									local HitDelay: number = Hitreg.Value == "Burst" and math.max(GhostDelay, AttackSpeed.Value, BurstWait) or math.max(HitBudget, Spacing + GhostDelay + Margin, AttackSpeed.Value, GameCooldown)
+									local HitDelay: number = ((Hitreg and Hitreg.Value) or "Normal") == "Burst" and math.max(GhostDelay, ((AttackSpeed and AttackSpeed.Value) or 0), BurstWait) or math.max(HitBudget, Spacing + GhostDelay + Margin, ((AttackSpeed and AttackSpeed.Value) or 0), GameCooldown)
 									local Deadline: number = math.max(SwingCooldown + HitDelay, LastHit + GapMin, tick() + GameCooldown)
 									local Tracked: boolean = false
-									if Hitreg.Value ~= "Burst" then
+									if ((Hitreg and Hitreg.Value) or "Normal") ~= "Burst" then
 										Tracked = CombatCache.Tracked[v.Character] or type(v.Character:GetAttribute("LastDamageTakenTime")) == "number"
 										if Tracked then
 											CombatCache.Tracked[v.Character] = true
 										end
 									end
 									local LatencyGuard, Waiting = false, false
-									if Tracked and Stock and HighHitreg.Enabled then
+									if Tracked and Stock and (HighHitreg and HighHitreg.Enabled) then
 										Ping = Ping or LocalPlayer:GetNetworkPing()
 										LatencyGuard = Ping >= 0.12
 									end
@@ -8213,15 +8221,15 @@ run(function()
 										LastAttack = tick()
 										store.attackReach = (Delta.Magnitude * 100) // 1 / 100
 										store.attackReachUpdate = tick() + 1
-										SwingCooldown = math.max(SwingCooldown + HitDelay, tick() - (Stock and HighHitreg.Enabled and Hitreg.Value ~= "Burst" and math.min(FrameTime, HitDelay - HitFloor * SpeedScale) or 0))
+										SwingCooldown = math.max(SwingCooldown + HitDelay, tick() - (Stock and (HighHitreg and HighHitreg.Enabled) and ((Hitreg and Hitreg.Value) or "Normal") ~= "Burst" and math.min(FrameTime, HitDelay - HitFloor * SpeedScale) or 0))
 										LastHit = tick()
-										if Hitreg.Value == "Burst" then
+										if ((Hitreg and Hitreg.Value) or "Normal") == "Burst" then
 											BurstShots += 1
 											if BurstShots >= BurstHits.Value then
 												BurstShots = 0
-												BurstWait = math.max(BurstDelay.Value / 1000, (BurstHits.Value * HitBudget) - ((BurstHits.Value - 1) * math.max(GhostDelay, AttackSpeed.Value, 0.03)))
+												BurstWait = math.max(BurstDelay.Value / 1000, (BurstHits.Value * HitBudget) - ((BurstHits.Value - 1) * math.max(GhostDelay, ((AttackSpeed and AttackSpeed.Value) or 0), 0.03)))
 											else
-												BurstWait = math.max(GhostDelay, AttackSpeed.Value, 0.03)
+												BurstWait = math.max(GhostDelay, ((AttackSpeed and AttackSpeed.Value) or 0), 0.03)
 											end
 										end
 										if Hit then
@@ -8238,7 +8246,7 @@ run(function()
 												if HitregTiming.MatchTransit and not ConfirmMin then
 													Timeout = math.max(Timeout, GetHitLifetime())
 												end
-												if Stock and HighHitreg.Enabled and Hitreg.Value ~= "Burst" and HitregTiming.RecoveryCap > 0 then
+												if Stock and (HighHitreg and HighHitreg.Enabled) and ((Hitreg and Hitreg.Value) or "Normal") ~= "Burst" and HitregTiming.RecoveryCap > 0 then
 													Timeout = math.max(Timeout, FrameTime * 2 + 0.1, (ConfirmMin or 0) + HitregTiming.Spread + FrameTime + 0.1)
 												end
 												table.insert(GhostPending, tick() + Timeout)
@@ -8347,7 +8355,7 @@ run(function()
 	
 						do
 							local Ghosted: boolean = false
-							local Recovery: boolean = HighHitreg.Enabled and Hitreg.Value ~= "Burst" and SwordMeta and SwordMeta.sword and SwordMeta.sword.attackSpeed == 0.3 and HitregTiming.RecoveryCap > 0 or false
+							local Recovery: boolean = (HighHitreg and HighHitreg.Enabled) and ((Hitreg and Hitreg.Value) or "Normal") ~= "Burst" and SwordMeta and SwordMeta.sword and SwordMeta.sword.attackSpeed == 0.3 and HitregTiming.RecoveryCap > 0 or false
 							if #Attacked == 0 then
 								table.clear(GhostPending)
 							end
@@ -8361,12 +8369,12 @@ run(function()
 								GhostWindow = tick() + 5
 								if GhostCount > (Recovery and 0 or 1) and tick() > GhostStep then
 									GhostStep = tick() + 1
-									GhostHold = tick() + (Recovery and HitregTiming.MarginHold or HighHitreg.Enabled and 2 or 10)
-									GhostDelay = math.min(GhostDelay + (Recovery and HitregTiming.RecoveryStep or HighHitreg.Enabled and 0.001 or 0.003), Recovery and HitregTiming.RecoveryCap or HighHitreg.Enabled and (10 / 34 - CleanFloor) or 0.1)
+									GhostHold = tick() + (Recovery and HitregTiming.MarginHold or (HighHitreg and HighHitreg.Enabled) and 2 or 10)
+									GhostDelay = math.min(GhostDelay + (Recovery and HitregTiming.RecoveryStep or (HighHitreg and HighHitreg.Enabled) and 0.001 or 0.003), Recovery and HitregTiming.RecoveryCap or (HighHitreg and HighHitreg.Enabled) and (10 / 34 - CleanFloor) or 0.1)
 								end
 							elseif GhostDelay > 0 and tick() > GhostHold then
-								GhostHold = tick() + (Recovery and HitregTiming.MarginHold or HighHitreg.Enabled and 2 or 10)
-								GhostDelay = math.max(GhostDelay - (HighHitreg.Enabled and 0.001 or 0.003), 0)
+								GhostHold = tick() + (Recovery and HitregTiming.MarginHold or (HighHitreg and HighHitreg.Enabled) and 2 or 10)
+								GhostDelay = math.max(GhostDelay - ((HighHitreg and HighHitreg.Enabled) and 0.001 or 0.003), 0)
 							end
 						end
 	
@@ -42575,7 +42583,7 @@ run(function()
 									wasHoldingProjectile = false
 								end
 							end
-						elseif store.hand.toolType == 'sword' and bedwars.DaoController.chargingMaid == nil then
+						elseif store.hand.toolType == 'sword' and (bedwars.DaoController and bedwars.DaoController.chargingMaid) == nil then
 							local currentTool = store.hand.tool
 							if currentTool ~= lastSwordTool then
 								lastSwordTool = currentTool
@@ -43817,13 +43825,13 @@ run(function()
 		if not meta then return false end
 
 		if Limit and Limit.Enabled then
-			if not isMeleeWeapon(sword.tool.Name) or (bedwars.DaoController and bedwars.DaoController.chargingMaid) then
+			if not isMeleeWeapon(sword.tool.Name) or (bedwars.DaoController and (bedwars.DaoController and bedwars.DaoController.chargingMaid)) then
 				return false
 			end
 		end
 
 		if LegitAura and LegitAura.Enabled then
-			local lastSwing = bedwars.SwordController and bedwars.SwordController.lastSwing
+			local lastSwing = bedwars.SwordController and ((bedwars.SwordController and bedwars.SwordController.lastSwing) or 0)
 			if not lastSwing or (tick() - lastSwing) > 0.25 then return false end
 		end
 
@@ -43845,7 +43853,7 @@ run(function()
 	local function resetSwordCooldown()
 		if bedwars.SwordController then
 			bedwars.SwordController.lastAttack = 0
-			bedwars.SwordController.lastSwing = 0
+			((bedwars.SwordController and bedwars.SwordController.lastSwing) or 0) = 0
 			if bedwars.SwordController.lastChargedAttackTimeMap then
 				for weaponName in pairs(bedwars.SwordController.lastChargedAttackTimeMap) do
 					bedwars.SwordController.lastChargedAttackTimeMap[weaponName] = 0
@@ -44922,7 +44930,7 @@ run(function()
 	local function resetSwordCooldown()
 		if bedwars.SwordController then
 			bedwars.SwordController.lastAttack = 0
-			bedwars.SwordController.lastSwing = 0
+			((bedwars.SwordController and bedwars.SwordController.lastSwing) or 0) = 0
 			if bedwars.SwordController.lastChargedAttackTimeMap then
 				for weaponName in pairs(bedwars.SwordController.lastChargedAttackTimeMap) do
 					bedwars.SwordController.lastChargedAttackTimeMap[weaponName] = 0
@@ -45003,7 +45011,7 @@ run(function()
 	local function attemptFire()
 		if fhBusy and (workspace:GetServerTimeNow() - (store._fhBusySince or 0)) < 0.15 then return false end
 
-		local lastSwing = bedwars.SwordController and bedwars.SwordController.lastSwing
+		local lastSwing = bedwars.SwordController and ((bedwars.SwordController and bedwars.SwordController.lastSwing) or 0)
 		if not lastSwing or (tick() - lastSwing) > 0.2 then return false end
 
 		local v = resolveTarget()

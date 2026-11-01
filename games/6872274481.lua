@@ -7416,11 +7416,9 @@ run(function()
 	local UserInputService = inputService
 	local PredictionLib = prediction
 	local TargetInfo = targetinfo
-	local getTinkerMount = bedwars.getTinkerMount or function() return nil end
-	local watchProjectile = bedwars.watchProjectile or function() end
-	local SwordTiming = (vape.Libraries and vape.Libraries.swordtiming) or {
-		ArrivalFloor = 0.05, HitFloor = 0.11, GapFloor = 0.11, HighSpacing = 0.18
-	}
+	local getTinkerMount = bedwars.getTinkerMount
+	local watchProjectile = bedwars.watchProjectile
+	local SwordTiming = vape.Libraries.swordtiming
 	local Killaura
 	local Targets
 	local Sort
@@ -7506,12 +7504,7 @@ run(function()
 	ArcCheck.FilterType = Enum.RaycastFilterType.Exclude
 	local AttackRemote = {FireServer = function() end}
 	local SwordSwingMiss = {FireServer = function() end}
-	local ProjectileRemote = {FireServer = function() end, SendToServer = function() end, GetRateLimit = function() return 8 end}
-	pcall(function()
-		if bedwars.Handler and bedwars.Handler.Get then
-			ProjectileRemote = bedwars.Handler:Get("ProjectileFire") or ProjectileRemote
-		end
-	end)
+	local ProjectileRemote = bedwars.Handler:Get("ProjectileFire")
 	local FastHitPending, LastShot = nil, 0
 	local ArrivalFloor: number = SwordTiming.ArrivalFloor
 	local HitBudget, HitFloor, GapFloor = 0.2, SwordTiming.HitFloor, SwordTiming.GapFloor
@@ -7531,10 +7524,7 @@ run(function()
 	local SelfReference = {Low = Vector3.zero, High = Vector3.zero, Claim = Vector3.zero}
 	local BurstShots, BurstWait = 0, 0
 	local FuryScale: number = 1 - ((bedwars.BlackMarketeerBalance and bedwars.BlackMarketeerBalance.FURY_POTION_ATTACK_SPEED_MULTIPLIER or 0.5) - 1)
-	local SwordEffect = nil
-	pcall(function()
-		SwordEffect = getmetatable(bedwars.SwordController).__index.playSwordEffect
-	end)
+	local SwordEffect = getmetatable(bedwars.SwordController).__index.playSwordEffect
 	local ScanInterval: number = 1 / 120
 	local FlatScale: Vector3 = Vector3.new(1, 0, 1)
 	local ParkedPosition: Vector3 = Vector3.new(9e9, 9e9, 9e9)

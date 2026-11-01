@@ -164,6 +164,19 @@ local store = {
 	terraKickTime = 0,
 }
 getgenv().store = store
+if type(store.ping) ~= "table" then
+	store.ping = setmetatable({}, {
+		__index = function(_, key)
+			if key == "total" or key == "incoming" then
+				local ok, value = pcall(function()
+					return lplr:GetNetworkPing()
+				end)
+				return (ok and tonumber(value)) or 0
+			end
+			return 0
+		end
+	})
+end
 local splashParams = RaycastParams.new()
 splashParams.FilterType = Enum.RaycastFilterType.Include
 local function splashAimPoint(root, hip)
@@ -6520,7 +6533,7 @@ run(function()
 						knockbackSpeed = bedwars.KnockbackUtil.calculateKnockbackVelocity(Vector3.one, 1, {
 							vertical = 0,
 							horizontal = horizontal,
-						}).Magnitude * (0.9 + (store.ping and store.ping.total or 0))
+						}).Magnitude * (0.9 + (store.ping and (function() local p = store.ping if type(p) == 'table' and type(p.total) == 'number' then return p.total end local ok, v = pcall(function() return lplr:GetNetworkPing() end) return (ok and tonumber(v)) or 0 end)() or 0))
 						stack = tick() + (knockbackSpeed / 45)
 						knockbackBoost = tick() + (horizontal / 3.5)
 					end
@@ -8294,9 +8307,9 @@ run(function()
 										LastHit = tick()
 										if ((Hitreg and Hitreg.Value) or "Normal") == "Burst" then
 											BurstShots += 1
-											if BurstShots >= BurstHits.Value then
+											if BurstShots >= ((BurstHits and BurstHits.Value) or 1) then
 												BurstShots = 0
-												BurstWait = math.max(BurstDelay.Value / 1000, (BurstHits.Value * HitBudget) - ((BurstHits.Value - 1) * math.max(GhostDelay, ((AttackSpeed and AttackSpeed.Value) or 0), 0.03)))
+												BurstWait = math.max(((BurstDelay and BurstDelay.Value) or 0) / 1000, (((BurstHits and BurstHits.Value) or 1) * HitBudget) - ((((BurstHits and BurstHits.Value) or 1) - 1) * math.max(GhostDelay, ((AttackSpeed and AttackSpeed.Value) or 0), 0.03)))
 											else
 												BurstWait = math.max(GhostDelay, ((AttackSpeed and AttackSpeed.Value) or 0), 0.03)
 											end
@@ -8311,7 +8324,7 @@ run(function()
 												table.insert(HitPending, {target = v.Character, sent = LastHit, timer = os.clock(), clock = workspace:GetServerTimeNow(), gap = ArrivalFloor * SpeedScale})
 											end
 											if Tracked then
-												local Timeout: number = math.max(0.3 + (store.ping.total or 0), LocalPlayer:GetNetworkPing() * 2 + 0.3)
+												local Timeout: number = math.max(0.3 + ((function() local p = store.ping if type(p) == 'table' and type(p.total) == 'number' then return p.total end local ok, v = pcall(function() return lplr:GetNetworkPing() end) return (ok and tonumber(v)) or 0 end)() or 0), LocalPlayer:GetNetworkPing() * 2 + 0.3)
 												if HitregTiming.MatchTransit and not ConfirmMin then
 													Timeout = math.max(Timeout, GetHitLifetime())
 												end
@@ -8398,7 +8411,7 @@ run(function()
 																	ShotDirection * ProjectileSpeed,
 																	ShotId,
 																	bedwars.getShotData(Item.itemType),
-																	workspace:GetServerTimeNow() - ((store.ping.total or 0) / 10)
+																	workspace:GetServerTimeNow() - (((function() local p = store.ping if type(p) == 'table' and type(p.total) == 'number' then return p.total end local ok, v = pcall(function() return lplr:GetNetworkPing() end) return (ok and tonumber(v)) or 0 end)() or 0) / 10)
 																)
 																FastHitPending = false
 																if type(Response) == "table" and Response.accepted then

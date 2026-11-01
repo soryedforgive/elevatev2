@@ -7840,7 +7840,7 @@ run(function()
 					if Config and Config.playAnimation == false then
 						return base(self, SwordMeta, Charged, Config)
 					end
-					if LegitAura and LegitAura.Enabled then
+					if LegitAura and (LegitAura and LegitAura.Enabled) then
 						local Clicked = bedwars.SwordController and bedwars.SwordController.lastSwing or 0
 						EffectSwing = Clicked
 						return base(self, SwordMeta, Charged, Config)
@@ -8002,7 +8002,7 @@ run(function()
 				end
 	
 				local BoxData = {}
-				local FrameCount, FrameWindow, FrameTime = 0, tick(), HighHitreg.Enabled and RunService.Heartbeat:Wait() or 1 / 240
+				local FrameCount, FrameWindow, FrameTime = 0, tick(), (HighHitreg and High(Hitreg and Hitreg.Enabled)) and RunService.Heartbeat:Wait() or 1 / 240
 				local FrameStep: number = FrameTime
 				if not Killaura.Enabled or Session ~= Current then
 					return
@@ -8035,11 +8035,11 @@ run(function()
 							FrameCount, FrameWindow = 0, tick()
 						end
 	
-						local Blocked: boolean = Mouse.Enabled and not UserInputService:IsMouseButtonPressed(0)
-						if not Blocked and AFKCheck.Enabled and isAfk() then
+						local Blocked: boolean = (Mouse and Mouse.Enabled) and not UserInputService:IsMouseButtonPressed(0)
+						if not Blocked and (AFKCheck and AFKCheck.Enabled) and isAfk() then
 							Blocked = true
 						end
-						if not Blocked and GUI.Enabled and bedwars.AppController:isLayerOpen(bedwars.UILayers.MAIN) then
+						if not Blocked and (GUI and GUI.Enabled) and bedwars.AppController:isLayerOpen(bedwars.UILayers.MAIN) then
 							Blocked = true
 						end
 						if not Blocked and Attackable.Enabled then
@@ -8050,12 +8050,12 @@ run(function()
 						end
 	
 						if not Blocked then
-							Sword = Limit.Enabled and store.hand or store.tools.sword
+							Sword = (Limit and Limit.Enabled) and store.hand or store.tools.sword
 							if not Sword or not Sword.tool then
 								Sword = nil
-							elseif Limit.Enabled and (store.hand.toolType ~= "sword" or bedwars.DaoController.chargingMaid) then
+							elseif (Limit and Limit.Enabled) and (store.hand.toolType ~= "sword" or bedwars.DaoController.chargingMaid) then
 								Sword = nil
-							elseif LegitAura.Enabled and (tick() - bedwars.SwordController.lastSwing) > 0.2 then
+							elseif (LegitAura and LegitAura.Enabled) and (tick() - bedwars.SwordController.lastSwing) > 0.2 then
 								Sword = nil
 							else
 								SwordMeta = bedwars.ItemMeta[Sword.tool.Name]
@@ -8089,11 +8089,11 @@ run(function()
 								local DisplayName: string = SwordMeta and SwordMeta.displayName or ""
 								local FuryMultiplier: number = bedwars.StatusEffectUtil:isActive(LocalPlayer.Character, "fury_potion") and FuryScale or 1
 								local SwordSpeed: number = SwordMeta and SwordMeta.sword and SwordMeta.sword.attackSpeed or 0.3
-								local Spacing, SpeedScale, GapMin, AttackCooldown, Stock = SwordTiming.Calculate(SwordSpeed, FuryMultiplier, HighHitreg.Enabled, HitBudget)
-								local Quantized: boolean = Stock and HighHitreg.Enabled and Hitreg.Value ~= "Burst" and HitregTiming.AlignFrames and FrameTime > 1 / 30
+								local Spacing, SpeedScale, GapMin, AttackCooldown, Stock = SwordTiming.Calculate(SwordSpeed, FuryMultiplier, (HighHitreg and High(Hitreg and Hitreg.Enabled)), HitBudget)
+								local Quantized: boolean = Stock and (HighHitreg and High(Hitreg and Hitreg.Enabled)) and Hitreg.Value ~= "Burst" and HitregTiming.AlignFrames and FrameTime > 1 / 30
 								local Variation: number = math.max(HitregTiming.Spread, tick() < HitregTiming.PeakUntil and HitregTiming.Peak or 0)
 								local Margin: number = 0
-								if Stock and HighHitreg.Enabled and Hitreg.Value ~= "Burst" then
+								if Stock and (HighHitreg and High(Hitreg and Hitreg.Enabled)) and Hitreg.Value ~= "Burst" then
 									local Reserve: number = Quantized and FrameTime * 0.5 or 0
 									local Minimum: number = not Quantized and HitregTiming.MinimumMargin or 0
 									local BootSamples: number = Quantized and math.min(HitregTiming.BootSamples, HitregTiming.FrameBootSamples) or HitregTiming.BootSamples
@@ -8104,16 +8104,16 @@ run(function()
 									local Jitter: number = Variation > HitregTiming.Noise and math.clamp(Variation * Scale - math.max(Spacing - HitFloor * SpeedScale, 0) + Reserve, 0, HitregTiming.Margin) or 0
 									Margin = math.max(Minimum, Warmup, Latency, Jitter)
 								end
-								if Stock and HighHitreg.Enabled then
+								if Stock and (HighHitreg and High(Hitreg and Hitreg.Enabled)) then
 									GapMin = math.max(GapMin + GhostDelay + Margin, AttackSpeed.Value)
 								end
-								local Band: number = (HighHitreg.Enabled and 10 / 34 or 10 / 33) * SpeedScale
-								local BandFloor: number = math.max(HighHitreg.Enabled and 10 / 35 or 10 / 34, CleanFloor) * SpeedScale
+								local Band: number = ((HighHitreg and High(Hitreg and Hitreg.Enabled)) and 10 / 34 or 10 / 33) * SpeedScale
+								local BandFloor: number = math.max((HighHitreg and High(Hitreg and Hitreg.Enabled)) and 10 / 35 or 10 / 34, CleanFloor) * SpeedScale
 								local Frames: number = math.floor(Band / FrameTime)
 								if Stock and (math.ceil(Spacing / FrameTime) * FrameTime) > Band and (Frames * FrameTime) >= BandFloor then
 									Spacing = math.max((Frames * FrameTime) - (FrameTime * 0.5), GapFloor * SpeedScale)
 								end
-								local Precise: boolean = Stock and HighHitreg.Enabled and Hitreg.Value ~= "Burst" and not Quantized and (math.ceil(Spacing / FrameTime) * FrameTime) > Band
+								local Precise: boolean = Stock and (HighHitreg and High(Hitreg and Hitreg.Enabled)) and Hitreg.Value ~= "Burst" and not Quantized and (math.ceil(Spacing / FrameTime) * FrameTime) > Band
 								local Reach: number = getReach(Sword.tool)
 								local RangeLimit: number = GetRangeLimit(Reach)
 	
@@ -8168,7 +8168,7 @@ run(function()
 									if not store.attacking then
 										store.attacking = true
 										store.KillauraTarget = v
-										if not Swing.Enabled and AnimDelay < tick() and not LegitAura.Enabled then
+										if not (Swing and Swing.Enabled) and AnimDelay < tick() and not (LegitAura and LegitAura.Enabled) then
 											local SwingDelay: number = math.max(SwingTime:GetRandomValue(), 0.09)
 											AnimDelay = tick() + SwingDelay
 											Swung = true
@@ -8212,7 +8212,7 @@ run(function()
 										end
 									end
 									local LatencyGuard, Waiting = false, false
-									if Tracked and Stock and HighHitreg.Enabled then
+									if Tracked and Stock and (HighHitreg and High(Hitreg and Hitreg.Enabled)) then
 										Ping = Ping or LocalPlayer:GetNetworkPing()
 										LatencyGuard = Ping >= 0.12
 									end
@@ -8257,7 +8257,7 @@ run(function()
 										LastAttack = tick()
 										store.attackReach = (Delta.Magnitude * 100) // 1 / 100
 										store.attackReachUpdate = tick() + 1
-										SwingCooldown = math.max(SwingCooldown + HitDelay, tick() - (Stock and HighHitreg.Enabled and Hitreg.Value ~= "Burst" and math.min(FrameTime, HitDelay - HitFloor * SpeedScale) or 0))
+										SwingCooldown = math.max(SwingCooldown + HitDelay, tick() - (Stock and (HighHitreg and High(Hitreg and Hitreg.Enabled)) and Hitreg.Value ~= "Burst" and math.min(FrameTime, HitDelay - HitFloor * SpeedScale) or 0))
 										LastHit = tick()
 										if Hitreg.Value == "Burst" then
 											BurstShots += 1
@@ -8282,7 +8282,7 @@ run(function()
 												if HitregTiming.MatchTransit and not ConfirmMin then
 													Timeout = math.max(Timeout, GetHitLifetime())
 												end
-												if Stock and HighHitreg.Enabled and Hitreg.Value ~= "Burst" and HitregTiming.RecoveryCap > 0 then
+												if Stock and (HighHitreg and High(Hitreg and Hitreg.Enabled)) and Hitreg.Value ~= "Burst" and HitregTiming.RecoveryCap > 0 then
 													Timeout = math.max(Timeout, FrameTime * 2 + 0.1, (ConfirmMin or 0) + HitregTiming.Spread + FrameTime + 0.1)
 												end
 												table.insert(GhostPending, tick() + Timeout)
@@ -8391,7 +8391,7 @@ run(function()
 	
 						do
 							local Ghosted: boolean = false
-							local Recovery: boolean = HighHitreg.Enabled and Hitreg.Value ~= "Burst" and SwordMeta and SwordMeta.sword and SwordMeta.sword.attackSpeed == 0.3 and HitregTiming.RecoveryCap > 0 or false
+							local Recovery: boolean = (HighHitreg and High(Hitreg and Hitreg.Enabled)) and Hitreg.Value ~= "Burst" and SwordMeta and SwordMeta.sword and SwordMeta.sword.attackSpeed == 0.3 and HitregTiming.RecoveryCap > 0 or false
 							if #Attacked == 0 then
 								table.clear(GhostPending)
 							end
@@ -8405,18 +8405,18 @@ run(function()
 								GhostWindow = tick() + 5
 								if GhostCount > (Recovery and 0 or 1) and tick() > GhostStep then
 									GhostStep = tick() + 1
-									GhostHold = tick() + (Recovery and HitregTiming.MarginHold or HighHitreg.Enabled and 2 or 10)
-									GhostDelay = math.min(GhostDelay + (Recovery and HitregTiming.RecoveryStep or HighHitreg.Enabled and 0.001 or 0.003), Recovery and HitregTiming.RecoveryCap or HighHitreg.Enabled and (10 / 34 - CleanFloor) or 0.1)
+									GhostHold = tick() + (Recovery and HitregTiming.MarginHold or (HighHitreg and High(Hitreg and Hitreg.Enabled)) and 2 or 10)
+									GhostDelay = math.min(GhostDelay + (Recovery and HitregTiming.RecoveryStep or (HighHitreg and High(Hitreg and Hitreg.Enabled)) and 0.001 or 0.003), Recovery and HitregTiming.RecoveryCap or (HighHitreg and High(Hitreg and Hitreg.Enabled)) and (10 / 34 - CleanFloor) or 0.1)
 								end
 							elseif GhostDelay > 0 and tick() > GhostHold then
-								GhostHold = tick() + (Recovery and HitregTiming.MarginHold or HighHitreg.Enabled and 2 or 10)
-								GhostDelay = math.max(GhostDelay - (HighHitreg.Enabled and 0.001 or 0.003), 0)
+								GhostHold = tick() + (Recovery and HitregTiming.MarginHold or (HighHitreg and High(Hitreg and Hitreg.Enabled)) and 2 or 10)
+								GhostDelay = math.max(GhostDelay - ((HighHitreg and High(Hitreg and Hitreg.Enabled)) and 0.001 or 0.003), 0)
 							end
 						end
 	
 						if #Attacked > 0 then
 							ContinueUntil = tick() + (ContinueSwing:GetRandomValue() / 1000)
-						elseif Sword and SwordMeta and tick() < ContinueUntil and AnimDelay < tick() and not Swing.Enabled and not LegitAura.Enabled then
+						elseif Sword and SwordMeta and tick() < ContinueUntil and AnimDelay < tick() and not (Swing and Swing.Enabled) and not (LegitAura and LegitAura.Enabled) then
 							local SwingDelay: number = math.max(SwingTime:GetRandomValue(), 0.11)
 							AnimDelay = tick() + SwingDelay
 							local Mount: Model? = getTinkerMount()
@@ -8436,7 +8436,7 @@ run(function()
 	
 						UpdateVisuals(Attacked, BoxData)
 	
-						if Face.Enabled and Attacked[1] then
+						if (Face and Face.Enabled) and Attacked[1] then
 							local Facing: BasePart = LocalPlayer.Character and LocalPlayer.Character.PrimaryPart or Entity.character.RootPart
 							local FlatPosition: Vector3 = Attacked[1].Entity.RootPart.Position * FlatScale
 							Facing.CFrame = CFrame.lookAt(Facing.Position, Vector3.new(FlatPosition.X, Facing.Position.Y + 0.001, FlatPosition.Z))
@@ -8592,6 +8592,18 @@ run(function()
 					if type(mod.CreateColorSlider) == "function" then return mod:CreateColorSlider(o) end
 					return {Hue=0,Sat=1,Value=1,Opacity=1,Object={Visible=true}}
 				end,
+				CreateTextBox = function(_, o)
+					o = o or {}
+					if type(mod.CreateTextBox) == "function" then return mod:CreateTextBox(o) end
+					if type(mod.CreateTextList) == "function" then
+						-- fallback UI control
+					end
+					return {
+						Value = o.Default or "",
+						Object = {Visible = true},
+						Name = o.Name,
+					}
+				end,
 			}
 		end
 		if type(Killaura.CreateGroup) ~= "function" then
@@ -8626,6 +8638,16 @@ run(function()
 		end
 		if type(Killaura.CreateTextList) ~= "function" then
 			Killaura.CreateTextList = function(self, opts) return stubTextList(self, opts) end
+		end
+		if type(Killaura.CreateTextBox) ~= "function" then
+			Killaura.CreateTextBox = function(self, opts)
+				opts = opts or {}
+				return {
+					Value = opts.Default or "",
+					Object = {Visible = true},
+					Name = opts.Name,
+				}
+			end
 		end
 	end
 
@@ -22975,7 +22997,25 @@ end
 	local OnlyWhenLow
 	local LowHealth
 
-	local util = vape.Libraries.bedwarsutil
+	local util = (vape.Libraries and vape.Libraries.bedwarsutil) or {}
+	if type(util) ~= "table" then util = {} end
+	if type(util.Chest) ~= "table" then
+		util.Chest = {
+			Range = 20,
+			OwnFolder = function() return nil end,
+			InRange = function() return false end,
+			Observe = function() end,
+			Give = function() return false end,
+			Take = function() end,
+			Entries = function() return {} end,
+		}
+	end
+	if type(util.Studs) ~= "function" then
+		util.Studs = function(val) return val == 1 and "stud" or "studs" end
+	end
+	if type(util.Shop) ~= "table" then
+		util.Shop = { ChestScreenOpen = function() return false end }
+	end
 	local cooldowns = {}
 	local banked = 0
 

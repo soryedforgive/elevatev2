@@ -7556,62 +7556,6 @@ run(function()
 		end
 		return Spacing, Scale, Gap, math.max(SwordSpeed * Fury - SwordTimingFallback.CooldownCorrection, 0), Stock
 	end
-	-- Libraries the killaura reads from vape.Libraries.
-	vape.Libraries.swordtiming = vape.Libraries.swordtiming or SwordTimingFallback
-	vape.Libraries.auraanims = vape.Libraries.auraanims or {
-		Normal = {
-			{CFrame = CFrame.Angles(math.rad(-30), 0, 0), Time = 0.1},
-			{CFrame = CFrame.new(), Time = 0.1}
-		}
-	}
-	store.ping = store.ping or {total = 0}
-
-	-- Adds the UI methods this UI lacks and holds toggles until every option exists.
-	local killauraReady = false
-	local blatant = vape.Categories.Blatant
-	local rawCreateModule = blatant.CreateModule
-	blatant.CreateModule = function(self, options)
-		blatant.CreateModule = rawCreateModule
-		local module
-		local original = options.Function
-		if original then
-			options.Function = function(state, ...)
-				local waited = 0
-				while state and not killauraReady and waited < 15 do
-					waited += task.wait()
-				end
-				if state and (not killauraReady or not module.Enabled) then
-					return
-				end
-				return original(state, ...)
-			end
-		end
-		module = rawCreateModule(self, options)
-		if not module.CreateGroup then
-			module.CreateGroup = function(parent, groupOptions)
-				local toggle = parent:CreateToggle({Name = groupOptions.Name, Default = groupOptions.Default, Function = groupOptions.Function, Tooltip = groupOptions.Tooltip})
-				return setmetatable({}, {
-					__index = function(_, key)
-						if type(key) == "string" and key:sub(1, 6) == "Create" then
-							return function(_, childOptions) return parent[key](parent, childOptions) end
-						end
-						return toggle[key]
-					end
-				})
-			end
-		end
-		if not module.CreateMultiDropdown then
-			module.CreateMultiDropdown = function(parent, dropdownOptions)
-				local toggles = {}
-				for _, name in dropdownOptions.List do
-					toggles[name] = parent:CreateToggle({Name = name, Darker = true})
-				end
-				return {Has = function(_, name) return toggles[name] ~= nil and toggles[name].Enabled end}
-			end
-		end
-		return module
-	end
-
 	local LocalPlayer = lplr
 	local Entity = entitylib
 	local Camera = gameCamera
@@ -7622,7 +7566,7 @@ run(function()
 	local TargetInfo = targetinfo
 	local getTinkerMount = bedwars.getTinkerMount
 	local watchProjectile = bedwars.watchProjectile
-	local SwordTiming = vape.Libraries.swordtiming
+	local SwordTiming = vape.Libraries.swordtiming or SwordTimingFallback
 	local Killaura
 	local Targets
 	local Sort
@@ -7702,7 +7646,7 @@ run(function()
 		return math.max(2, LocalPlayer:GetNetworkPing() * 2 + 0.3, (ConfirmMin or 0) + HitregTiming.Spread + 0.5)
 	end
 	
-	local Animations, AnimDelay, AnimTween, ArmC0 = vape.Libraries.auraanims, tick()
+	local Animations, AnimDelay, AnimTween, ArmC0 = vape.Libraries.auraanims or {Normal = {{CFrame = CFrame.Angles(math.rad(-30), 0, 0), Time = 0.1}, {CFrame = CFrame.new(), Time = 0.1}}}, tick()
 	local ArmWrist: Motor6D?
 	local ArcCheck: RaycastParams = RaycastParams.new()
 	ArcCheck.FilterType = Enum.RaycastFilterType.Exclude
@@ -7968,6 +7912,14 @@ run(function()
 		Name = "Killaura",
 		Function = function(Callback: boolean)
 			if Callback then
+				-- Config load can toggle this before the options below exist.
+				local waited = 0
+				while not (LegitAura and Sort and Targets and SwingRange and AttackRange) and waited < 15 do
+					waited += task.wait()
+				end
+				if not (LegitAura and Sort and Targets) or not Killaura.Enabled then
+					return
+				end
 				local oldAura = vape.Modules.KillauraOLD
 				if oldAura and oldAura.Enabled then
 					oldAura:Toggle()
@@ -8219,7 +8171,7 @@ run(function()
 								ScanSettings.Part = "RootPart"
 								ScanSettings.Players = Targets.Players.Enabled
 								ScanSettings.NPCs = Targets.NPCs.Enabled
-								ScanSettings.Priority = Targets.Priority.Value
+								ScanSettings.Priority = (Targets.Priority and Targets.Priority.Value or nil)
 								ScanSettings.Sort = sortmethods[Sort.Value]
 								Entities = Entity.AllPosition(ScanSettings)
 								ScanClock = os.clock()
@@ -8313,6 +8265,7 @@ run(function()
 									if not store.attacking then
 										store.attacking = true
 										store.KillauraTarget = v
+										store.kaTargetAt = tick()
 										if not Swing.Enabled and AnimDelay < tick() and not LegitAura.Enabled then
 											local SwingDelay: number = math.max(SwingTime:GetRandomValue(), 0.11)
 											AnimDelay = tick() + SwingDelay
@@ -8423,7 +8376,7 @@ run(function()
 												table.insert(HitPending, {target = v.Character, sent = LastHit, timer = os.clock(), clock = workspace:GetServerTimeNow(), gap = ArrivalFloor * SpeedScale})
 											end
 											if Tracked then
-												local Timeout: number = math.max(0.3 + (store.ping.total or 0), LocalPlayer:GetNetworkPing() * 2 + 0.3)
+												local Timeout: number = math.max(0.3 + (store.ping and store.ping.total or 0), LocalPlayer:GetNetworkPing() * 2 + 0.3)
 												if HitregTiming.MatchTransit and not ConfirmMin then
 													Timeout = math.max(Timeout, GetHitLifetime())
 												end
@@ -8498,7 +8451,7 @@ run(function()
 																	ShotDirection * ProjectileSpeed,
 																	ShotId,
 																	bedwars.getShotData(Item.itemType),
-																	workspace:GetServerTimeNow() - ((store.ping.total or 0) / 10)
+																	workspace:GetServerTimeNow() - ((store.ping and store.ping.total or 0) / 10)
 																)
 																FastHitPending = false
 																if type(Response) == "table" and Response.accepted then
@@ -8643,7 +8596,7 @@ run(function()
 		NPCs = true
 	})
 	local Methods: {string} = {"Damage", "Distance"}
-	for _, v: string in sortlist do
+	for _, v: string in (sortlist or {"Health", "Threat", "Angle", "Cursor", "Forest"}) do
 		if not table.find(Methods, v) then
 			table.insert(Methods, v)
 		end
@@ -8756,37 +8709,12 @@ run(function()
 		Name = "Target Mode",
 		List = Methods
 	})
-	FastHits = Killaura:CreateGroup({
-		Name = "Fast Hits",
-		Default = false,
-		Tooltip = 'Mixes projectiles in with your hits for more damage'
-	})
-	Whitelist = FastHits:CreateTextList({
-		Name = "Projectiles",
-		Default = {"arrow", "snowball"},
-		Darker = true,
-		Tooltip = 'Projectiles to use'
-	})
-	AlsoUse = FastHits:CreateMultiDropdown({
-		Name = "Also use",
-		List = {"Sophia", "Whim", "Nazar", "Umeko", "Lasso", "Fireball", "Gloop"},
-		Default = {},
-		Darker = true,
-		Tooltip = 'Extra weapons to fire as well'
-	})
-	Legit = FastHits:CreateToggle({
-		Name = "Legit Switch",
-		Darker = true
-	})
-	FireRate = FastHits:CreateSlider({
-		Name = "Fire rate",
-		Suffix = "seconds",
-		Min = 0,
-		Max = 2,
-		Decimal = 100,
-		Darker = true,
-		Default = 0.05
-	})
+	-- Fast Hits needs projectile helpers this base does not expose, so it stays off.
+	FastHits = {Enabled = false}
+	Whitelist = {ListEnabled = {}}
+	AlsoUse = {Has = function() return false end}
+	Legit = {Enabled = false}
+	FireRate = {Value = 0.05}
 	ContinueSwing = Killaura:CreateTwoSlider({
 		Name = "Continue swing",
 		Min = 0,
@@ -8804,7 +8732,7 @@ run(function()
 	Attackable = Killaura:CreateToggle({Name = "Attackable check"})
 	Swing = Killaura:CreateToggle({Name = "No Swing"})
 	GUI = Killaura:CreateToggle({Name = "GUI check"})
-	local ShowTargetGroup = Killaura:CreateGroup({
+	local ShowTargetGroup = Killaura:CreateToggle({
 		Name = "Show target",
 		Function = function(Callback: boolean)
 			if vape.ThreadFix then
@@ -8871,12 +8799,12 @@ run(function()
 			table.insert(EasingStyles, v.Name)
 		end
 	end
-	BoxAttackTween = ShowTargetGroup:CreateDropdown({
+	BoxAttackTween = Killaura:CreateDropdown({
 		Name = "Box Animation",
 		List = EasingStyles,
 		Darker = true
 	})
-	BoxAttackSpeed = ShowTargetGroup:CreateSlider({
+	BoxAttackSpeed = Killaura:CreateSlider({
 		Name = "Start Animation Speed",
 		Min = 0,
 		Max = 10,
@@ -8884,7 +8812,7 @@ run(function()
 		Decimal = 30,
 		Darker = true
 	})
-	BoxAttackSpeedEnd = ShowTargetGroup:CreateSlider({
+	BoxAttackSpeedEnd = Killaura:CreateSlider({
 		Name = "End Animation Speed",
 		Min = 0,
 		Max = 10,
@@ -8892,18 +8820,18 @@ run(function()
 		Decimal = 30,
 		Darker = true
 	})
-	BoxSwingColor = ShowTargetGroup:CreateColorSlider({
+	BoxSwingColor = Killaura:CreateColorSlider({
 		Name = "Target Color",
 		Darker = true,
 		DefaultHue = 0.6,
 		DefaultOpacity = 0.5
 	})
-	BoxAttackColor = ShowTargetGroup:CreateColorSlider({
+	BoxAttackColor = Killaura:CreateColorSlider({
 		Name = "Attack Color",
 		Darker = true,
 		DefaultOpacity = 0.5
 	})
-	local TargetParticlesGroup = Killaura:CreateGroup({
+	local TargetParticlesGroup = Killaura:CreateToggle({
 		Name = "Target particles",
 		Function = function(Callback: boolean)
 			if vape.ThreadFix then
@@ -8965,7 +8893,7 @@ run(function()
 			end
 		end
 	})
-	ParticleTexture = TargetParticlesGroup:CreateTextBox({
+	ParticleTexture = Killaura:CreateTextBox({
 		Name = "Texture",
 		Function = function()
 			for _, v: Part in Particles do
@@ -8978,7 +8906,7 @@ run(function()
 		Default = "rbxassetid://14736249347",
 		Darker = true
 	})
-	ParticleColor1 = TargetParticlesGroup:CreateColorSlider({
+	ParticleColor1 = Killaura:CreateColorSlider({
 		Name = "Color Begin",
 		Function = function(Hue: number, Sat: number, Val: number)
 			for _, v: Part in Particles do
@@ -8993,7 +8921,7 @@ run(function()
 		end,
 		Darker = true
 	})
-	ParticleColor2 = TargetParticlesGroup:CreateColorSlider({
+	ParticleColor2 = Killaura:CreateColorSlider({
 		Name = "Color End",
 		Function = function(Hue: number, Sat: number, Val: number)
 			for _, v: Part in Particles do
@@ -9008,7 +8936,7 @@ run(function()
 		end,
 		Darker = true
 	})
-	ParticleSize = TargetParticlesGroup:CreateSlider({
+	ParticleSize = Killaura:CreateSlider({
 		Name = "Size",
 		Min = 0,
 		Max = 1,
@@ -9025,7 +8953,7 @@ run(function()
 		Darker = true
 	})
 	Face = Killaura:CreateToggle({Name = "Face target"})
-	Animation = Killaura:CreateGroup({
+	Animation = Killaura:CreateToggle({
 		Name = "Custom Animation",
 		Function = function(Callback: boolean)
 			if vape.ThreadFix then
@@ -9045,12 +8973,12 @@ run(function()
 	end
 	table.sort(AnimationNames)
 	table.insert(AnimationNames, 1, "Normal")
-	AnimationMode = Animation:CreateDropdown({
+	AnimationMode = Killaura:CreateDropdown({
 		Name = "Animation Mode",
 		List = AnimationNames,
 		Darker = true
 	})
-	AnimationSpeed = Animation:CreateSlider({
+	AnimationSpeed = Killaura:CreateSlider({
 		Name = "Animation Speed",
 		Min = 0,
 		Max = 2,
@@ -9058,7 +8986,7 @@ run(function()
 		Decimal = 10,
 		Darker = true
 	})
-	AnimationTween = Animation:CreateToggle({
+	AnimationTween = Killaura:CreateToggle({
 		Name = "No Tween",
 		Darker = true
 	})
@@ -9077,9 +9005,6 @@ run(function()
 		Name = "Swing only",
 		Tooltip = "Only attacks while swinging manually"
 	})
-
-	Targets.Priority = Targets.Priority or {Value = nil}
-	killauraReady = true
 end)
 
 run(function()

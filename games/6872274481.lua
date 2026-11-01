@@ -7702,11 +7702,41 @@ run(function()
 	local FireRates: {[string]: number} = {}
 
 	local function PlaySwordSwing(SwordMeta: any, Sword: any)
-		bedwars.swingEffect(SwordMeta, {itemSkin = Sword.itemSkin})
+		-- bedwars.swingEffect is often nil on elev builds
+		local ok = pcall(function()
+			if type(bedwars.swingEffect) == "function" then
+				bedwars.swingEffect(SwordMeta, {itemSkin = Sword and Sword.itemSkin})
+				return
+			end
+			if bedwars.SwordController and type(bedwars.SwordController.playSwordEffect) == "function" then
+				bedwars.SwordController:playSwordEffect(SwordMeta, false, {itemSkin = Sword and Sword.itemSkin})
+			end
+		end)
+		if not ok then
+			pcall(function()
+				if SwordEffect then
+					SwordEffect(bedwars.SwordController, SwordMeta, false, {itemSkin = Sword and Sword.itemSkin})
+				end
+			end)
+		end
 	end
 	
 	local function GetShots(): {{any}}
-		local Shots: {{any}} = getProjectiles(Whitelist.ListEnabled, AlsoUse:Has("Sophia"), AlsoUse:Has("Whim"), AlsoUse:Has("Nazar"), AlsoUse:Has("Umeko"), AlsoUse:Has("Fireball"), AlsoUse:Has("Gloop"))
+		if type(getProjectiles) ~= "function" then
+			return {}
+		end
+		local Shots: {{any}} = {}
+		pcall(function()
+			Shots = getProjectiles(
+				(Whitelist and Whitelist.ListEnabled) or {},
+				AlsoUse and AlsoUse.Has and AlsoUse:Has("Sophia"),
+				AlsoUse and AlsoUse.Has and AlsoUse:Has("Whim"),
+				AlsoUse and AlsoUse.Has and AlsoUse:Has("Nazar"),
+				AlsoUse and AlsoUse.Has and AlsoUse:Has("Umeko"),
+				AlsoUse and AlsoUse.Has and AlsoUse:Has("Fireball"),
+				AlsoUse and AlsoUse.Has and AlsoUse:Has("Gloop")
+			) or {}
+		end)
 		local Lasso = AlsoUse:Has("Lasso") and getItem("lasso") or nil
 		local Source = Lasso and bedwars.ItemMeta.lasso.projectileSource or nil
 		if not Source then

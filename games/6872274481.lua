@@ -7435,7 +7435,224 @@ local Attacking
 
 
 run(function()
-	-- Elevate compat: this base has no bedwars.Handler, swordtiming, StatusEffectUtil, etc.
+	-- ===== Aether Killaura via remote loadstring =====
+	-- https://api.aetherv2.xyz/raw/main/games/6872274481/Blatant/Killaura.lua
+
+	local function __kaNotify(msg)
+		warn("[elevate] " .. tostring(msg))
+	end
+
+	if type(vape.Libraries.swordtiming) ~= "table" or type(vape.Libraries.swordtiming.Calculate) ~= "function" then
+		local timing = {
+			SafeSpacing = 0.296, HighSpacing = 0.2925, HitFloor = 0.285,
+			GapFloor = 0.2915, ArrivalFloor = 0.2747,
+			CooldownCorrection = (0.017999999225139618 / 10) + 0.013412,
+		}
+		local weaponSpacing = {[0.21]=0.229,[0.25]=0.249,[0.35]=0.345,[0.4]=0.341,[0.6]=0.63}
+		function timing.Calculate(speed, fury, high, budget)
+			speed = tonumber(speed) or 0.3
+			fury = tonumber(fury) or 1
+			budget = tonumber(budget) or 0.2
+			local highOn = high == true or high == "Advanced" or high == "High"
+			local base = highOn and timing.HighSpacing or timing.SafeSpacing
+			local spaced = weaponSpacing[speed] or (speed * 0.95)
+			local scale = math.clamp(fury, 0.5, 1.5)
+			return math.max(base, spaced) * scale, scale, timing.GapFloor * scale, math.clamp(budget, 0.17, 0.34), true
+		end
+		vape.Libraries.swordtiming = timing
+	end
+	if type(vape.Libraries.auraanims) ~= "table" then
+		vape.Libraries.auraanims = { Default = {}, Animations = {} }
+	end
+
+	do
+		local function makeStub()
+			local util = {}
+			function util.isActive(_, character, effect)
+				if not character then return false end
+				local ok, res = pcall(function()
+					if effect == "frozen" then
+						local untilt = character:GetAttribute("StunnedUntilTime")
+						if untilt and untilt > workspace:GetServerTimeNow() then return true end
+					end
+					if effect == "fury_potion" then
+						if character:GetAttribute("Fury") or character:GetAttribute("fury_potion") then return true end
+					end
+					return false
+				end)
+				return ok and res or false
+			end
+			util.IsActive = util.isActive
+			return util
+		end
+		if type(bedwars) == "table" then
+			local se = rawget(bedwars, "StatusEffectUtil")
+			if type(se) ~= "table" or type(se.isActive) ~= "function" then
+				local loaded
+				pcall(function()
+					loaded = require(game:GetService("ReplicatedStorage").TS.entity["status-effect"]["status-effect-util"]).StatusEffectUtil
+				end)
+				rawset(bedwars, "StatusEffectUtil", (type(loaded) == "table" and loaded) or makeStub())
+			end
+		end
+	end
+
+	if type(bedwars) == "table" and (type(bedwars.Handler) ~= "table" or type(bedwars.Handler.Get) ~= "function") then
+		local function getNet(Name)
+			local Ok, Object = pcall(function() return bedwars.Client:Get(Name) end)
+			return Ok and Object or nil
+		end
+		local AttackObject
+		bedwars.Handler = {
+			Get = function(_, Name)
+				if Name == "SwordHit" then
+					return {
+						GetRateLimit = function() return 210 end,
+						Fire = function(_, _, Payload)
+							AttackObject = AttackObject or getNet(remotes.AttackEntity)
+							if not AttackObject then return end
+							local Remote = AttackObject.instance
+							if Remote then Remote:FireServer(Payload) return end
+							store.kaSending = true
+							pcall(AttackObject.SendToServer, AttackObject, Payload)
+							store.kaSending = false
+						end
+					}
+				elseif Name == "ProjectileFire" then
+					return {
+						Fire = function(_, _, ...)
+							local Object = getNet("ProjectileFire")
+							if not Object then return end
+							local Ok, Response = pcall(Object.CallServer, Object, ...)
+							return Ok and Response or nil
+						end
+					}
+				elseif Name == "SwordSwingMiss" then
+					return {
+						Fire = function(_, _, Payload)
+							local Object = getNet("SwordSwingMiss")
+							if Object and Object.SendToServer then pcall(Object.SendToServer, Object, Payload) end
+						end
+					}
+				end
+				return { Fire = function() end, FireServer = function() end, GetRateLimit = function() return 300 end }
+			end
+		}
+	end
+
+	local function addMissingAPI(mod)
+		if type(mod) ~= "table" or mod.__elevateAetherAPI then return mod end
+		mod.__elevateAetherAPI = true
+		if type(mod.CreateGroup) ~= "function" then
+			function mod:CreateGroup(opts)
+				opts = opts or {}
+				local parent = self
+				local outer
+				if opts.Name then
+					outer = parent:CreateToggle({
+						Name = opts.Name, Default = opts.Default == true,
+						Function = opts.Function, Tooltip = opts.Tooltip, Darker = opts.Darker,
+					})
+				end
+				local group = {}
+				local function proxy(method)
+					return function(_, childOpts)
+						childOpts = childOpts or {}
+						childOpts.Darker = true
+						if type(parent[method]) == "function" then return parent[method](parent, childOpts) end
+						if method == "CreateToggle" then return { Enabled = childOpts.Default == true }
+						elseif method == "CreateSlider" then return { Value = childOpts.Default or 0 }
+						elseif method == "CreateTwoSlider" then
+							local o = { ValueMin = childOpts.DefaultMin or 0, ValueMax = childOpts.DefaultMax or 0 }
+							function o:GetRandomValue() return self.ValueMin end
+							return o
+						elseif method == "CreateMultiDropdown" or method == "CreateTextList" then
+							local o = { ListEnabled = childOpts.Default or {} }
+							function o:Has(name)
+								for _, v in (self.ListEnabled or {}) do
+									if tostring(v):lower() == tostring(name):lower() then return true end
+								end
+								return false
+							end
+							return o
+						elseif method == "CreateDropdown" then return { Value = childOpts.List and childOpts.List[1] }
+						elseif method == "CreateColorSlider" then return { Hue = 0, Sat = 1, Value = 1, Opacity = 1 }
+						end
+						return {}
+					end
+				end
+				setmetatable(group, {
+					__index = function(_, k)
+						if k == "Enabled" then return outer and outer.Enabled or false end
+						if type(k) == "string" and k:sub(1, 6) == "Create" then return proxy(k) end
+					end
+				})
+				return group
+			end
+		end
+		if type(mod.CreateMultiDropdown) ~= "function" then
+			function mod:CreateMultiDropdown(opts)
+				opts = opts or {}
+				local list = type(self.CreateTextList) == "function"
+					and self:CreateTextList({ Name = opts.Name, Default = opts.Default or {}, Darker = opts.Darker })
+					or { ListEnabled = opts.Default or {} }
+				if type(list.Has) ~= "function" then
+					function list:Has(name)
+						for _, v in (self.ListEnabled or {}) do
+							if tostring(v):lower() == tostring(name):lower() then return true end
+						end
+						return false
+					end
+				end
+				return list
+			end
+		end
+		return mod
+	end
+
+	local blatant = vape.Categories and vape.Categories.Blatant
+	if blatant and type(blatant.CreateModule) == "function" and not blatant.__elevateAetherPatched then
+		blatant.__elevateAetherPatched = true
+		local oldCM = blatant.CreateModule
+		blatant.CreateModule = function(self, def)
+			local m = oldCM(self, def)
+			if type(m) == "table" then return addMissingAPI(m) end
+			return m
+		end
+	end
+
+	if vape.Modules and vape.Modules.Killaura and not vape.Modules.KillauraOLD then
+		vape.Modules.KillauraOLD = vape.Modules.Killaura
+		pcall(function()
+			if vape.Modules.KillauraOLD.Enabled then vape.Modules.KillauraOLD:Toggle() end
+		end)
+	end
+
+	local URL = "https://api.aetherv2.xyz/raw/main/games/6872274481/Blatant/Killaura.lua"
+	local okHttp, src = pcall(function() return game:HttpGet(URL) end)
+	if not okHttp or type(src) ~= "string" or #src < 200 then
+		__kaNotify("Aether Killaura HttpGet failed: " .. tostring(src))
+	else
+		local fn, err = loadstring(src, "AetherKillaura")
+		if not fn then
+			__kaNotify("Aether Killaura compile failed: " .. tostring(err))
+		else
+			local okRun, runErr = pcall(fn)
+			if not okRun then
+				__kaNotify("Aether Killaura execute failed: " .. tostring(runErr))
+			else
+				if vape.Modules and vape.Modules.Killaura then
+					addMissingAPI(vape.Modules.Killaura)
+				end
+				print("[elevate] Aether Killaura loaded from api.aetherv2.xyz")
+			end
+		end
+	end
+
+	-- Skip old embedded Killaura body
+	do return end
+
+	-- (dead code below kept so file structure stays valid)
 	local bedwars = setmetatable({}, {__index = bedwars})
 	local function getNet(Name)
 		local Ok, Object = pcall(function()

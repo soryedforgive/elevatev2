@@ -2308,7 +2308,32 @@ run(function()
 		ZapNetworking = require(lplr.PlayerScripts.TS.lib.network),
 	}, {
 		__index = function(self, ind)
-			rawset(self, ind, Knit.Controllers[ind])
+			if ind == "StatusEffectUtil" then
+				local stub = {
+					isActive = function(_, character, effect)
+						if not character then return false end
+						local ok, res = pcall(function()
+							if effect == "frozen" then
+								local untilt = character:GetAttribute("StunnedUntilTime")
+								if untilt and untilt > workspace:GetServerTimeNow() then return true end
+							end
+							if effect == "fury_potion" then
+								if character:GetAttribute("Fury") or character:GetAttribute("fury_potion") then return true end
+							end
+							local key = tostring(effect or "")
+							return not not (character:GetAttribute(key) or character:GetAttribute("StatusEffect_" .. key))
+						end)
+						return ok and res or false
+					end
+				}
+				stub.IsActive = stub.isActive
+				rawset(self, ind, stub)
+				return stub
+			end
+			local ctrl = Knit.Controllers[ind]
+			if ctrl ~= nil then
+				rawset(self, ind, ctrl)
+			end
 			return rawget(self, ind)
 		end
 	})
@@ -8903,6 +8928,43 @@ run(function()
 Killaura = vape.Categories.Blatant:CreateModule({
 		Name = "Killaura",
 		Function = function(Callback: boolean)
+			-- HARD guard: StatusEffectUtil must never be nil in this session
+			do
+				local function ensureSE()
+					if type(bedwars) ~= "table" then return end
+					local se = rawget(bedwars, "StatusEffectUtil")
+					if type(se) == "table" and type(se.isActive) == "function" then return end
+					local stub = {
+						isActive = function(_, character, effect)
+							if not character then return false end
+							local ok, res = pcall(function()
+								if effect == "frozen" then
+									local untilt = character:GetAttribute("StunnedUntilTime")
+									if untilt and untilt > workspace:GetServerTimeNow() then return true end
+								end
+								if effect == "fury_potion" then
+									if character:GetAttribute("Fury") or character:GetAttribute("fury_potion") then return true end
+								end
+								return false
+							end)
+							return ok and res or false
+						end
+					}
+					stub.IsActive = stub.isActive
+					rawset(bedwars, "StatusEffectUtil", stub)
+				end
+				ensureSE()
+				if type(getgenv) == "function" then
+					getgenv().__elevateStatusActive = function(character, effect)
+						ensureSE()
+						local se = bedwars and rawget(bedwars, "StatusEffectUtil")
+						if not se or type(se.isActive) ~= "function" then return false end
+						local ok, res = pcall(se.isActive, se, character, effect)
+						return ok and res and true or false
+					end
+				end
+			end
+			print("[elevate] killaura-enable statusfix-v3")
 			if Callback then
 				local oldAura = vape.Modules.KillauraOLD
 				if oldAura and oldAura.Enabled then
@@ -9132,7 +9194,14 @@ Killaura = vape.Categories.Blatant:CreateModule({
 							Blocked = not Entity.isAlive
 								or (LocalPlayer.Character:GetAttribute("StunnedUntilTime") or 0) > workspace:GetServerTimeNow()
 								or LocalPlayer.Character:FindFirstChild("elk") ~= nil
-								or (getgenv().__elevateStatusActive or __elevateStatusActive)(LocalPlayer.Character, "frozen")
+								or (function()
+									local se = bedwars and rawget(bedwars, "StatusEffectUtil")
+									if type(se) == "table" and type(se.isActive) == "function" then
+										local ok, r = pcall(se.isActive, se, LocalPlayer.Character, "frozen")
+										return ok and r
+									end
+									return false
+								end)()
 						end
 	
 						if not Blocked then
@@ -9173,7 +9242,14 @@ Killaura = vape.Categories.Blatant:CreateModule({
 								UpdateSelfReference(os.clock(), SendPosition)
 								local LocalFacing: Vector3 = Root.CFrame.LookVector * FlatScale
 								local DisplayName: string = SwordMeta and SwordMeta.displayName or ""
-								local FuryMultiplier: number = (getgenv().__elevateStatusActive or __elevateStatusActive)(LocalPlayer.Character, "fury_potion") and FuryScale or 1
+								local FuryMultiplier: number = (function()
+									local se = bedwars and rawget(bedwars, "StatusEffectUtil")
+									if type(se) == "table" and type(se.isActive) == "function" then
+										local ok, r = pcall(se.isActive, se, LocalPlayer.Character, "fury_potion")
+										return ok and r
+									end
+									return false
+								end)() and FuryScale or 1
 								local SwordSpeed: number = SwordMeta and SwordMeta.sword and SwordMeta.sword.attackSpeed or 0.3
 								local Spacing, SpeedScale, GapMin, AttackCooldown, Stock = SwordTiming.Calculate(SwordSpeed, FuryMultiplier, HighHitreg.Enabled, HitBudget)
 								local Quantized: boolean = Stock and HighHitreg.Enabled and Hitreg.Value ~= "Burst" and HitregTiming.AlignFrames and FrameTime > 1 / 30

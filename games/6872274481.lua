@@ -7633,15 +7633,14 @@ run(function()
 		MatchTransit = true,
 		Peak = 0,
 		PeakUntil = 0,
-		MarginHold = 1.5,
+		MarginHold = 2,
 		MinimumMargin = 0,
 		ColdMargin = 0,
 		BootSamples = 0,
 		FrameBootSamples = 2,
 		LatencyScale = 1,
-		-- Soft recovery: cap ghost penalty so one miss doesn't stall the aura
-		RecoveryCap = 0.045,
-		RecoveryStep = 0.01
+		RecoveryCap = 0,
+		RecoveryStep = 0.015
 	}
 	local function GetHitLifetime(): number
 		return math.max(2, LocalPlayer:GetNetworkPing() * 2 + 0.3, (ConfirmMin or 0) + HitregTiming.Spread + 0.5)
@@ -8203,7 +8202,7 @@ run(function()
 									Margin = math.max(Minimum, Warmup, Latency, Jitter)
 								end
 								if Stock and HighHitreg.Enabled then
-									GapMin = math.max(GapMin + GhostDelay + Margin, AttackSpeed.Value)
+									GapMin = math.max(GapMin + Margin, AttackSpeed.Value)
 								end
 								local Band: number = (HighHitreg.Enabled and 10 / 34 or 10 / 33) * SpeedScale
 								local BandFloor: number = math.max(HighHitreg.Enabled and 10 / 35 or 10 / 34, CleanFloor) * SpeedScale
@@ -8301,7 +8300,8 @@ run(function()
 	
 									ServerNow = ServerNow or workspace:GetServerTimeNow()
 									local GameCooldown: number = math.max((bedwars.SwordController.lastAttack + AttackCooldown) - ServerNow, 0)
-									local HitDelay: number = Hitreg.Value == "Burst" and math.max(GhostDelay, AttackSpeed.Value, BurstWait) or math.max(HitBudget, Spacing + GhostDelay + Margin, AttackSpeed.Value, GameCooldown)
+									-- GhostDelay forced out of the schedule (was causing stop-hit-stop stutter)
+									local HitDelay: number = Hitreg.Value == "Burst" and math.max(AttackSpeed.Value, BurstWait) or math.max(HitBudget, Spacing + Margin, AttackSpeed.Value, GameCooldown)
 									local Deadline: number = math.max(SwingCooldown + HitDelay, LastHit + GapMin, tick() + GameCooldown)
 									local Tracked: boolean = false
 									if Hitreg.Value ~= "Burst" then
@@ -8310,20 +8310,11 @@ run(function()
 											CombatCache.Tracked[v.Character] = true
 										end
 									end
-									local LatencyGuard, Waiting = false, false
-									if Tracked and Stock and HighHitreg.Enabled then
-										Ping = Ping or LocalPlayer:GetNetworkPing()
-										LatencyGuard = Ping >= 0.12
-									end
-									if Tracked then
-										Deadline = math.max(Deadline, HitDeadline)
-									end
-									if LatencyGuard then
-										local Pending = HitPending[#HitPending]
-										if Pending and #HitPending < 3 and ConfirmMin and (ConfirmMin + FrameTime) < HitDelay and Pending.sent == LastHit then
-											Deadline = math.max(Deadline, LastHit + HitDelay + 0.04)
-											Waiting = true
-										end
+									local Waiting = false
+									-- Only apply HitDeadline if it's not far in the future (prevents multi-frame freezes)
+									if Tracked and HitDeadline > 0 then
+										local hd = math.min(HitDeadline, tick() + HitDelay + 0.02)
+										Deadline = math.max(Deadline, hd)
 									end
 									local Remaining: number = Deadline - tick()
 									if Precise and not Waiting and Remaining > 0 and Remaining < math.min(FrameTime, FrameStep, 0.003) then
@@ -8489,33 +8480,15 @@ run(function()
 						end
 	
 						do
-							local Ghosted: boolean = false
-							-- Always use soft recovery path so GhostDelay cannot climb into stutter range
-							local Recovery: boolean = true
+							-- Clear expired pending flags but NEVER stack GhostDelay (stop-hit-stop fix)
 							if #Attacked == 0 then
 								table.clear(GhostPending)
 							end
 							while GhostPending[1] and tick() > GhostPending[1] do
 								table.remove(GhostPending, 1)
-								Ghosted = true
 							end
-	
-							if Ghosted then
-								GhostCount = (tick() < GhostWindow and GhostCount or 0) + 1
-								GhostWindow = tick() + 3
-								-- Need more consecutive ghosts before adding delay (was 1)
-								if GhostCount > 2 and tick() > GhostStep then
-									GhostStep = tick() + 1.25
-									GhostHold = tick() + HitregTiming.MarginHold
-									local step = HitregTiming.RecoveryStep or 0.01
-									local cap = HitregTiming.RecoveryCap or 0.045
-									GhostDelay = math.min(GhostDelay + step, cap)
-								end
-							elseif GhostDelay > 0 and tick() > GhostHold then
-								-- Recover faster than we punish
-								GhostHold = tick() + 0.75
-								GhostDelay = math.max(GhostDelay - 0.004, 0)
-							end
+							GhostDelay = 0
+							GhostCount = 0
 						end
 	
 						if #Attacked > 0 then

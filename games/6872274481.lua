@@ -7449,11 +7449,16 @@ run(function()
 			if Name == "SwordHit" then
 				return {
 					GetRateLimit = function()
-						return 300
+						return 210
 					end,
 					Fire = function(_, _, Payload)
 						AttackObject = AttackObject or getNet(remotes.AttackEntity)
 						if not AttackObject then
+							return
+						end
+						local Remote = AttackObject.instance
+						if Remote then
+							Remote:FireServer(Payload)
 							return
 						end
 						store.kaSending = true

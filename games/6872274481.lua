@@ -132,7 +132,135 @@ local uipallet = vape.Libraries.uipallet
 local tween = vape.Libraries.tween
 local color = vape.Libraries.color
 local whitelist = { get = function() return nil, true end, tag = function() return '' end, customtags = {} }
+
 local prediction = vape.Libraries.prediction
+
+-- ElevateCreateGroupPolyfill: UI builds without CreateGroup/CreateTextBox
+do
+	local function patchModuleAPI(mod)
+		if type(mod) ~= "table" then return mod end
+		local function stubToggle(opts)
+			opts = opts or {}
+			local tgl = { Enabled = opts.Default == true, Value = opts.Default, Object = {Visible = true}, Name = opts.Name }
+			function tgl:Toggle(v)
+				if v == nil then self.Enabled = not self.Enabled else self.Enabled = not not v end
+				if opts.Function then pcall(opts.Function, self.Enabled) end
+			end
+			return tgl
+		end
+		local function childOps(host)
+			return {
+				CreateToggle = function(_, o)
+					o = o or {}
+					if type(host.CreateToggle) == "function" then return host:CreateToggle(o) end
+					return stubToggle(o)
+				end,
+				CreateSlider = function(_, o)
+					o = o or {}
+					if type(host.CreateSlider) == "function" then return host:CreateSlider(o) end
+					return { Value = o.Default or o.Min or 0, Object = {Visible = true}, Name = o.Name }
+				end,
+				CreateDropdown = function(_, o)
+					o = o or {}
+					if type(host.CreateDropdown) == "function" then return host:CreateDropdown(o) end
+					local list = o.List or {}
+					return { Value = o.Default or list[1], List = list, Object = {Visible = true}, Name = o.Name }
+				end,
+				CreateTextList = function(_, o)
+					o = o or {}
+					if type(host.CreateTextList) == "function" then return host:CreateTextList(o) end
+					return { ListEnabled = o.Default or {}, Object = {Visible = true}, Name = o.Name }
+				end,
+				CreateMultiDropdown = function(_, o)
+					o = o or {}
+					if type(host.CreateMultiDropdown) == "function" then return host:CreateMultiDropdown(o) end
+					local enabled = {}
+					for _, v in ipairs(o.Default or {}) do enabled[v] = true end
+					return { ListEnabled = o.Default or {}, Object = {Visible = true}, Name = o.Name, Has = function(_, n) return enabled[n] == true end }
+				end,
+				CreateTextBox = function(_, o)
+					o = o or {}
+					if type(host.CreateTextBox) == "function" then return host:CreateTextBox(o) end
+					return { Value = o.Default or "", Object = {Visible = true}, Name = o.Name }
+				end,
+				CreateTwoSlider = function(_, o)
+					o = o or {}
+					if type(host.CreateTwoSlider) == "function" then return host:CreateTwoSlider(o) end
+					if type(host.CreateSlider) == "function" then
+						local s = host:CreateSlider({ Name = o.Name, Min = o.Min or 0, Max = o.Max or 1000, Default = o.DefaultMax or 0, Tooltip = o.Tooltip })
+						s.MinValue, s.MaxValue = o.DefaultMin or 0, s.Value
+						return s
+					end
+					return { MinValue = o.DefaultMin or 0, MaxValue = o.DefaultMax or 0, Value = o.DefaultMax or 0, Object = {Visible = true} }
+				end,
+				CreateColorSlider = function(_, o)
+					if type(host.CreateColorSlider) == "function" then return host:CreateColorSlider(o) end
+					return { Hue = 0, Sat = 1, Value = 1, Opacity = 1, Object = {Visible = true} }
+				end,
+				CreateGroup = function(_, o)
+					return patchModuleAPI(host).CreateGroup(host, o)
+				end,
+			}
+		end
+		if type(mod.CreateGroup) ~= "function" then
+			mod.CreateGroup = function(self, opts)
+				opts = opts or {}
+				local grp
+				if type(self.CreateToggle) == "function" then
+					grp = self:CreateToggle({ Name = opts.Name, Default = opts.Default, Tooltip = opts.Tooltip, Function = opts.Function })
+				else
+					grp = stubToggle(opts)
+				end
+				grp = grp or stubToggle(opts)
+				for k, v in pairs(childOps(self)) do
+					if k ~= "CreateGroup" then grp[k] = v end
+				end
+				-- child CreateGroup -> toggle on parent
+				grp.CreateGroup = function(_, o)
+					o = o or {}
+					return self:CreateGroup(o)
+				end
+				return grp
+			end
+		end
+		for k, v in pairs(childOps(mod)) do
+			if type(mod[k]) ~= "function" then
+				mod[k] = v
+			end
+		end
+		return mod
+	end
+	-- Hook CreateModule on all categories so every module gets the polyfill
+	local function hookCategory(cat)
+		if type(cat) ~= "table" or type(cat.CreateModule) ~= "function" then return end
+		if cat._elevateGroupPatched then return end
+		cat._elevateGroupPatched = true
+		local old = cat.CreateModule
+		cat.CreateModule = function(self, opts)
+			local mod = old(self, opts)
+			return patchModuleAPI(mod)
+		end
+	end
+	task.defer(function()
+		pcall(function()
+			if type(vape) == "table" and type(vape.Categories) == "table" then
+				for _, cat in pairs(vape.Categories) do
+					hookCategory(cat)
+				end
+			end
+		end)
+	end)
+	-- also patch existing categories immediately if present
+	pcall(function()
+		if type(vape) == "table" and type(vape.Categories) == "table" then
+			for _, cat in pairs(vape.Categories) do
+				hookCategory(cat)
+			end
+		end
+	end)
+	getgenv().ElevatePatchModuleAPI = patchModuleAPI
+end
+
 local getfontsize = vape.Libraries.getfontsize
 local getcustomasset = vape.Libraries.getcustomasset
 
@@ -8002,7 +8130,7 @@ run(function()
 				end
 	
 				local BoxData = {}
-				local FrameCount, FrameWindow, FrameTime = 0, tick(), (HighHitreg and High(Hitreg and Hitreg.Enabled)) and RunService.Heartbeat:Wait() or 1 / 240
+				local FrameCount, FrameWindow, FrameTime = 0, tick(), (HighHitreg and HighHitreg.Enabled) and RunService.Heartbeat:Wait() or 1 / 240
 				local FrameStep: number = FrameTime
 				if not Killaura.Enabled or Session ~= Current then
 					return
@@ -8089,11 +8217,11 @@ run(function()
 								local DisplayName: string = SwordMeta and SwordMeta.displayName or ""
 								local FuryMultiplier: number = bedwars.StatusEffectUtil:isActive(LocalPlayer.Character, "fury_potion") and FuryScale or 1
 								local SwordSpeed: number = SwordMeta and SwordMeta.sword and SwordMeta.sword.attackSpeed or 0.3
-								local Spacing, SpeedScale, GapMin, AttackCooldown, Stock = SwordTiming.Calculate(SwordSpeed, FuryMultiplier, (HighHitreg and High(Hitreg and Hitreg.Enabled)), HitBudget)
-								local Quantized: boolean = Stock and (HighHitreg and High(Hitreg and Hitreg.Enabled)) and Hitreg.Value ~= "Burst" and HitregTiming.AlignFrames and FrameTime > 1 / 30
+								local Spacing, SpeedScale, GapMin, AttackCooldown, Stock = SwordTiming.Calculate(SwordSpeed, FuryMultiplier, (HighHitreg and HighHitreg.Enabled), HitBudget)
+								local Quantized: boolean = Stock and (HighHitreg and HighHitreg.Enabled) and Hitreg.Value ~= "Burst" and HitregTiming.AlignFrames and FrameTime > 1 / 30
 								local Variation: number = math.max(HitregTiming.Spread, tick() < HitregTiming.PeakUntil and HitregTiming.Peak or 0)
 								local Margin: number = 0
-								if Stock and (HighHitreg and High(Hitreg and Hitreg.Enabled)) and Hitreg.Value ~= "Burst" then
+								if Stock and (HighHitreg and HighHitreg.Enabled) and Hitreg.Value ~= "Burst" then
 									local Reserve: number = Quantized and FrameTime * 0.5 or 0
 									local Minimum: number = not Quantized and HitregTiming.MinimumMargin or 0
 									local BootSamples: number = Quantized and math.min(HitregTiming.BootSamples, HitregTiming.FrameBootSamples) or HitregTiming.BootSamples
@@ -8104,16 +8232,16 @@ run(function()
 									local Jitter: number = Variation > HitregTiming.Noise and math.clamp(Variation * Scale - math.max(Spacing - HitFloor * SpeedScale, 0) + Reserve, 0, HitregTiming.Margin) or 0
 									Margin = math.max(Minimum, Warmup, Latency, Jitter)
 								end
-								if Stock and (HighHitreg and High(Hitreg and Hitreg.Enabled)) then
+								if Stock and (HighHitreg and HighHitreg.Enabled) then
 									GapMin = math.max(GapMin + GhostDelay + Margin, AttackSpeed.Value)
 								end
-								local Band: number = ((HighHitreg and High(Hitreg and Hitreg.Enabled)) and 10 / 34 or 10 / 33) * SpeedScale
-								local BandFloor: number = math.max((HighHitreg and High(Hitreg and Hitreg.Enabled)) and 10 / 35 or 10 / 34, CleanFloor) * SpeedScale
+								local Band: number = ((HighHitreg and HighHitreg.Enabled) and 10 / 34 or 10 / 33) * SpeedScale
+								local BandFloor: number = math.max((HighHitreg and HighHitreg.Enabled) and 10 / 35 or 10 / 34, CleanFloor) * SpeedScale
 								local Frames: number = math.floor(Band / FrameTime)
 								if Stock and (math.ceil(Spacing / FrameTime) * FrameTime) > Band and (Frames * FrameTime) >= BandFloor then
 									Spacing = math.max((Frames * FrameTime) - (FrameTime * 0.5), GapFloor * SpeedScale)
 								end
-								local Precise: boolean = Stock and (HighHitreg and High(Hitreg and Hitreg.Enabled)) and Hitreg.Value ~= "Burst" and not Quantized and (math.ceil(Spacing / FrameTime) * FrameTime) > Band
+								local Precise: boolean = Stock and (HighHitreg and HighHitreg.Enabled) and Hitreg.Value ~= "Burst" and not Quantized and (math.ceil(Spacing / FrameTime) * FrameTime) > Band
 								local Reach: number = getReach(Sword.tool)
 								local RangeLimit: number = GetRangeLimit(Reach)
 	
@@ -8212,7 +8340,7 @@ run(function()
 										end
 									end
 									local LatencyGuard, Waiting = false, false
-									if Tracked and Stock and (HighHitreg and High(Hitreg and Hitreg.Enabled)) then
+									if Tracked and Stock and (HighHitreg and HighHitreg.Enabled) then
 										Ping = Ping or LocalPlayer:GetNetworkPing()
 										LatencyGuard = Ping >= 0.12
 									end
@@ -8257,7 +8385,7 @@ run(function()
 										LastAttack = tick()
 										store.attackReach = (Delta.Magnitude * 100) // 1 / 100
 										store.attackReachUpdate = tick() + 1
-										SwingCooldown = math.max(SwingCooldown + HitDelay, tick() - (Stock and (HighHitreg and High(Hitreg and Hitreg.Enabled)) and Hitreg.Value ~= "Burst" and math.min(FrameTime, HitDelay - HitFloor * SpeedScale) or 0))
+										SwingCooldown = math.max(SwingCooldown + HitDelay, tick() - (Stock and (HighHitreg and HighHitreg.Enabled) and Hitreg.Value ~= "Burst" and math.min(FrameTime, HitDelay - HitFloor * SpeedScale) or 0))
 										LastHit = tick()
 										if Hitreg.Value == "Burst" then
 											BurstShots += 1
@@ -8282,7 +8410,7 @@ run(function()
 												if HitregTiming.MatchTransit and not ConfirmMin then
 													Timeout = math.max(Timeout, GetHitLifetime())
 												end
-												if Stock and (HighHitreg and High(Hitreg and Hitreg.Enabled)) and Hitreg.Value ~= "Burst" and HitregTiming.RecoveryCap > 0 then
+												if Stock and (HighHitreg and HighHitreg.Enabled) and Hitreg.Value ~= "Burst" and HitregTiming.RecoveryCap > 0 then
 													Timeout = math.max(Timeout, FrameTime * 2 + 0.1, (ConfirmMin or 0) + HitregTiming.Spread + FrameTime + 0.1)
 												end
 												table.insert(GhostPending, tick() + Timeout)
@@ -8391,7 +8519,7 @@ run(function()
 	
 						do
 							local Ghosted: boolean = false
-							local Recovery: boolean = (HighHitreg and High(Hitreg and Hitreg.Enabled)) and Hitreg.Value ~= "Burst" and SwordMeta and SwordMeta.sword and SwordMeta.sword.attackSpeed == 0.3 and HitregTiming.RecoveryCap > 0 or false
+							local Recovery: boolean = (HighHitreg and HighHitreg.Enabled) and Hitreg.Value ~= "Burst" and SwordMeta and SwordMeta.sword and SwordMeta.sword.attackSpeed == 0.3 and HitregTiming.RecoveryCap > 0 or false
 							if #Attacked == 0 then
 								table.clear(GhostPending)
 							end
@@ -8405,12 +8533,12 @@ run(function()
 								GhostWindow = tick() + 5
 								if GhostCount > (Recovery and 0 or 1) and tick() > GhostStep then
 									GhostStep = tick() + 1
-									GhostHold = tick() + (Recovery and HitregTiming.MarginHold or (HighHitreg and High(Hitreg and Hitreg.Enabled)) and 2 or 10)
-									GhostDelay = math.min(GhostDelay + (Recovery and HitregTiming.RecoveryStep or (HighHitreg and High(Hitreg and Hitreg.Enabled)) and 0.001 or 0.003), Recovery and HitregTiming.RecoveryCap or (HighHitreg and High(Hitreg and Hitreg.Enabled)) and (10 / 34 - CleanFloor) or 0.1)
+									GhostHold = tick() + (Recovery and HitregTiming.MarginHold or (HighHitreg and HighHitreg.Enabled) and 2 or 10)
+									GhostDelay = math.min(GhostDelay + (Recovery and HitregTiming.RecoveryStep or (HighHitreg and HighHitreg.Enabled) and 0.001 or 0.003), Recovery and HitregTiming.RecoveryCap or (HighHitreg and HighHitreg.Enabled) and (10 / 34 - CleanFloor) or 0.1)
 								end
 							elseif GhostDelay > 0 and tick() > GhostHold then
-								GhostHold = tick() + (Recovery and HitregTiming.MarginHold or (HighHitreg and High(Hitreg and Hitreg.Enabled)) and 2 or 10)
-								GhostDelay = math.max(GhostDelay - ((HighHitreg and High(Hitreg and Hitreg.Enabled)) and 0.001 or 0.003), 0)
+								GhostHold = tick() + (Recovery and HitregTiming.MarginHold or (HighHitreg and HighHitreg.Enabled) and 2 or 10)
+								GhostDelay = math.max(GhostDelay - ((HighHitreg and HighHitreg.Enabled) and 0.001 or 0.003), 0)
 							end
 						end
 	
@@ -23148,6 +23276,7 @@ end
 		Default = true,
 		Tooltip = 'Takes items out of the chest while a shop is open'
 	})
+		pcall(function() if getgenv().ElevatePatchModuleAPI then getgenv().ElevatePatchModuleAPI(AutoBank) end end)
 	OnlyWhenLow = AutoBank:CreateGroup({
 		Name = 'Only when low',
 		Tooltip = 'Only banks once your health drops to Low HP'

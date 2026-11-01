@@ -7444,7 +7444,64 @@ run(function()
 	local TargetInfo = targetinfo
 	local getTinkerMount = bedwars.getTinkerMount
 	local watchProjectile = bedwars.watchProjectile
-	local SwordTiming = vape.Libraries.swordtiming
+	-- Inline SwordTiming (do not use vape.Libraries.swordtiming — Elevate's copy is often wrong/mismatched)
+	local WeaponSpacing = {
+		[0.21] = 0.229,
+		[0.25] = 0.249,
+		[0.35] = 0.345,
+		[0.4] = 0.341,
+		[0.6] = 0.63,
+	}
+	local SwordTiming = {
+		SafeSpacing = 0.295,
+		HighSpacing = 0.285,
+		HitFloor = 0.292,
+		GapFloor = 0.2965,
+		ArrivalFloor = 0.274,
+		CooldownCorrection = (0.017999999225139618 / 10) + 0.013412,
+	}
+	-- Matches Killaura call: Calculate(SwordSpeed, FuryMultiplier, HighHitreg.Enabled, HitBudget)
+	function SwordTiming.Calculate(Speed, FuryMultiplier, HighEnabled, Budget, Hits)
+		local HighMode
+		local fury = 1
+		if type(FuryMultiplier) == "string" then
+			-- Alternate API: Calculate(Speed, HighMode, DynamicDelay, Budget, Hits)
+			HighMode = FuryMultiplier
+			if type(HighEnabled) == "number" then
+				-- DynamicDelay passed as third
+			elseif type(HighEnabled) == "boolean" then
+				HighMode = HighEnabled and "Advanced Mode" or HighMode
+			end
+		else
+			fury = type(FuryMultiplier) == "number" and FuryMultiplier or 1
+			if HighEnabled == true or HighEnabled == "Advanced Mode" or HighEnabled == "Dynamic" then
+				HighMode = "Advanced Mode"
+			elseif HighEnabled == "Dynamic" then
+				HighMode = "Dynamic"
+			else
+				HighMode = "Stealth Mode"
+			end
+		end
+		local Stock = type(Speed) == "number" and math.abs(Speed - 0.3) < 0.001
+		local Normal = (HighMode == "Advanced Mode" or HighMode == "Dynamic") and SwordTiming.HighSpacing or SwordTiming.SafeSpacing
+		local Spacing = Stock and Normal or WeaponSpacing[Speed] or ((type(Speed) == "number" and Speed + 0.03) or Normal)
+		if type(fury) == "number" and fury > 0 and fury ~= 1 then
+			Spacing = Spacing * fury
+		end
+		if HighMode == "Dynamic" and type(HighEnabled) == "number" then
+			Spacing = math.max(Spacing * (HighEnabled / 100), Budget or 0)
+		end
+		if Hits and Hits ~= 35 then
+			Spacing = math.max(Spacing, 10 / math.max(Hits - 1, 1))
+		end
+		Spacing = math.max(Spacing, Budget or 0)
+		local Scale = Spacing / (Stock and Normal or SwordTiming.SafeSpacing)
+		local Gap = (Scale < 1 and SwordTiming.GapFloor or SwordTiming.HitFloor) * Scale
+		if Stock and (HighMode == "Advanced Mode" or HighMode == "Dynamic") then
+			Gap = math.max(Gap, SwordTiming.GapFloor, Budget or 0)
+		end
+		return Spacing, Scale, Gap, math.max((type(Speed) == "number" and Speed or 0.3) - SwordTiming.CooldownCorrection, 0), Stock
+	end
 	local Killaura
 	local Targets
 	local Sort
@@ -7530,7 +7587,12 @@ run(function()
 	ArcCheck.FilterType = Enum.RaycastFilterType.Exclude
 	local AttackRemote = {FireServer = function() end}
 	local SwordSwingMiss = {FireServer = function() end}
-	local ProjectileRemote = bedwars.Handler:Get("ProjectileFire")
+	local ProjectileRemote = {Fire = function() end, FireServer = function() end, CallServer = function() end}
+	pcall(function()
+		if bedwars and bedwars.Handler and bedwars.Handler.Get then
+			ProjectileRemote = bedwars.Handler:Get("ProjectileFire") or ProjectileRemote
+		end
+	end)
 	local FastHitPending, LastShot = nil, 0
 	local ArrivalFloor: number = SwordTiming.ArrivalFloor
 	local HitBudget, HitFloor, GapFloor = 0.2, SwordTiming.HitFloor, SwordTiming.GapFloor
@@ -7550,10 +7612,7 @@ run(function()
 	local SelfReference = {Low = Vector3.zero, High = Vector3.zero, Claim = Vector3.zero}
 	local BurstShots, BurstWait = 0, 0
 	local FuryScale: number = 1 - ((bedwars.BlackMarketeerBalance and bedwars.BlackMarketeerBalance.FURY_POTION_ATTACK_SPEED_MULTIPLIER or 0.5) - 1)
-	local SwordEffect = (function()
-		local Meta = getmetatable(bedwars.SwordController)
-		return Meta and type(Meta.__index) == "table" and Meta.__index.playSwordEffect or bedwars.SwordController.playSwordEffect
-	end)()
+	local SwordEffect = getmetatable(bedwars.SwordController).__index.playSwordEffect
 	local ScanInterval: number = 1 / 75
 	local FlatScale: Vector3 = Vector3.new(1, 0, 1)
 	local ParkedPosition: Vector3 = Vector3.new(9e9, 9e9, 9e9)
@@ -7578,7 +7637,7 @@ run(function()
 		if Parent and RootPart then
 			local RootParent: Instance? = RootPart.Parent
 			if (RootParent == Character or RootParent ~= nil and RootPart:IsDescendantOf(Character))
-				and Ent.Health > 0 and Ent.Targetable and (Entity.isVulnerable == nil or Entity.isVulnerable(Ent)) then
+				and Ent.Health > 0 and Ent.Targetable and Entity.isVulnerable(Ent) then
 				local Now: number = os.clock()
 				local Checked = CombatCache.Static[Character]
 				if not Checked then
@@ -7668,9 +7727,26 @@ run(function()
 	end
 	
 	task.spawn(function()
-		AttackRemote = bedwars.Handler:Get("SwordHit")
-		SwordSwingMiss = bedwars.Handler:Get("SwordSwingMiss")
-		HitBudget = 60 / AttackRemote:GetRateLimit()
+		local tries = 0
+		repeat
+			tries += 1
+			pcall(function()
+				if bedwars and bedwars.Handler and bedwars.Handler.Get then
+					local hit = bedwars.Handler:Get("SwordHit")
+					local miss = bedwars.Handler:Get("SwordSwingMiss")
+					if hit then AttackRemote = hit end
+					if miss then SwordSwingMiss = miss end
+				end
+		end)
+			if AttackRemote and AttackRemote.GetRateLimit then
+				local ok, rate = pcall(function() return AttackRemote:GetRateLimit() end)
+				if ok and type(rate) == "number" and rate > 0 then
+					HitBudget = 60 / rate
+				end
+				break
+			end
+			task.wait(0.25)
+		until tries >= 40
 	end)
 	
 	local FireRates: {[string]: number} = {}
@@ -7915,8 +7991,8 @@ run(function()
 							}
 						}
 					}
-					pcall(debug.setupvalue, SwordEffect, 7, FakeKnit)
-					pcall(debug.setupvalue, bedwars.ScytheController.playLocalAnimation, 3, FakeKnit)
+					debug.setupvalue(SwordEffect, 7, FakeKnit)
+					debug.setupvalue(bedwars.ScytheController.playLocalAnimation, 3, FakeKnit)
 	
 					task.spawn(function()
 						local Started: boolean = false
@@ -8440,8 +8516,8 @@ run(function()
 					v.Parent = nil
 					ParticleShown[v] = false
 				end
-				pcall(debug.setupvalue, SwordEffect, 7, bedwars.Knit)
-				pcall(debug.setupvalue, bedwars.ScytheController.playLocalAnimation, 3, bedwars.Knit)
+				debug.setupvalue(SwordEffect, 7, bedwars.Knit)
+				debug.setupvalue(bedwars.ScytheController.playLocalAnimation, 3, bedwars.Knit)
 				if bedwars.SwordController.playSwordEffect == SwingHook then
 					bedwars.SwordController.playSwordEffect = OldSwing
 				end
@@ -8554,18 +8630,12 @@ run(function()
 			Data.Enabled = true
 		end
 	
-		if LoadHighHitreg then
-			LoadHighHitreg(self, Data)
-		end
+		LoadHighHitreg(self, Data)
 	end
 	
 	function HighHitreg:Save(Data)
-		if SaveHighHitreg then
-			SaveHighHitreg(self, Data)
-		end
-		if Data[self.Name] then
-			Data[self.Name].Version = 1
-		end
+		SaveHighHitreg(self, Data)
+		Data[self.Name].Version = 1
 	end
 	Hitreg = {Value = "Stable"}
 	MaxTargets = Killaura:CreateSlider({
@@ -8899,6 +8969,7 @@ run(function()
 		Name = "Swing only",
 		Tooltip = "Only attacks while swinging manually"
 	})
+
 
 	Targets.Priority = Targets.Priority or {Value = nil}
 	killauraReady = true
@@ -22783,6 +22854,26 @@ run(function()
 	local LowHealth
 
 	local util = vape.Libraries.bedwarsutil
+	if type(util) ~= "table" then
+		util = {
+			Chest = {
+				Range = 20,
+				OwnFolder = function() return nil end,
+				InRange = function() return false end,
+				Observe = function() end,
+				Give = function() return false end,
+				Take = function() return false end,
+			},
+			Shop = {
+				ChestScreenOpen = function() return false end,
+				BuyScreenOpen = function() return false end,
+			},
+			Health = { Current = function() return nil end },
+			Queue = { Await = function() return true end },
+			Studs = "studs",
+		}
+		warn("[elevate] bedwarsutil library missing — AutoBank stubs active")
+	end
 	local cooldowns = {}
 	local banked = 0
 
@@ -22904,8 +22995,8 @@ run(function()
 		Name = 'Chest range',
 		Min = 1,
 		Max = 30,
-		Default = util.Chest.Range,
-		Suffix = util.Studs,
+		Default = (util and util.Chest and util.Chest.Range) or 20,
+		Suffix = (util and util.Studs) or 'studs',
 		Tooltip = 'How close to your personal chest you need to be'
 	})
 	Withdraw = AutoBank:CreateToggle({

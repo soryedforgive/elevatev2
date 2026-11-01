@@ -7933,7 +7933,7 @@ run(function()
 					end
 				end))
 	
-				if Animation.Enabled then
+				if Animation and Animation.Enabled then
 					local FakeKnit = {
 						Controllers = {
 							ViewmodelController = {
@@ -7941,7 +7941,7 @@ run(function()
 									return bedwars.ViewmodelController:isVisible()
 								end,
 								playAnimation = function(...)
-									if LegitAura.Enabled or not store.attacking or not (ArmWrist and ArmWrist.Parent) then
+									if (LegitAura and LegitAura.Enabled) or not store.attacking or not (ArmWrist and ArmWrist.Parent) then
 										bedwars.ViewmodelController:playAnimation(select(2, ...))
 									end
 								end
@@ -7997,7 +7997,7 @@ run(function()
 							if not Started then
 								task.wait()
 							end
-						until (not Killaura.Enabled) or (not Animation.Enabled) or Session ~= Current
+						until (not Killaura.Enabled) or (not Animation or not Animation.Enabled) or Session ~= Current
 					end)
 				end
 	
@@ -8300,7 +8300,7 @@ run(function()
 													selfPosition = {value = HitPosition}
 												}
 											})
-											if FastHits.Enabled and not FastHitPending and tick() > LastShot then
+											if (FastHits and FastHits.Enabled) and not FastHitPending and tick() > LastShot then
 												local Projectiles = GetShots()
 												if #Projectiles > 0 then
 													ProjectileIndex += 1
@@ -8493,6 +8493,142 @@ run(function()
 		Tooltip = "Attack players around you\nwithout aiming at them"
 	})
 	
+
+	-- Polyfill GUI APIs missing from some Elevate UI builds
+	do
+		local function stubToggle(parent, opts)
+			opts = opts or {}
+			local tgl = {
+				Enabled = opts.Default == true,
+				Value = opts.Default,
+				Object = {Visible = true},
+				Name = opts.Name,
+			}
+			function tgl:Toggle(v)
+				if v == nil then self.Enabled = not self.Enabled else self.Enabled = v and true or false end
+				if opts.Function then pcall(opts.Function, self.Enabled) end
+			end
+			return tgl
+		end
+		local function stubSlider(parent, opts)
+			opts = opts or {}
+			return { Value = opts.Default or opts.Min or 0, Object = {Visible = true}, Name = opts.Name }
+		end
+		local function stubDropdown(parent, opts)
+			opts = opts or {}
+			local list = opts.List or {}
+			return { Value = opts.Default or list[1], List = list, Object = {Visible = true}, Name = opts.Name }
+		end
+		local function stubTextList(parent, opts)
+			opts = opts or {}
+			return { ListEnabled = opts.Default or {}, Object = {Visible = true}, Name = opts.Name }
+		end
+		local function stubMulti(parent, opts)
+			opts = opts or {}
+			local enabled = {}
+			for _, v in ipairs(opts.Default or {}) do enabled[v] = true end
+			return {
+				ListEnabled = opts.Default or {},
+				Object = {Visible = true},
+				Name = opts.Name,
+				Has = function(_, name) return enabled[name] == true end,
+			}
+		end
+		local function stubTwoSlider(parent, opts)
+			opts = opts or {}
+			return {
+				MinValue = opts.DefaultMin or opts.Min or 0,
+				MaxValue = opts.DefaultMax or opts.Max or 0,
+				Value = opts.DefaultMax or 0,
+				Object = {Visible = true},
+				Name = opts.Name,
+			}
+		end
+		local function childProxy(mod)
+			return {
+				CreateToggle = function(_, o)
+					o = o or {}; o.Darker = true
+					if type(mod.CreateToggle) == "function" then return mod:CreateToggle(o) end
+					return stubToggle(mod, o)
+				end,
+				CreateSlider = function(_, o)
+					o = o or {}; o.Darker = true
+					if type(mod.CreateSlider) == "function" then return mod:CreateSlider(o) end
+					return stubSlider(mod, o)
+				end,
+				CreateDropdown = function(_, o)
+					o = o or {}; o.Darker = true
+					if type(mod.CreateDropdown) == "function" then return mod:CreateDropdown(o) end
+					return stubDropdown(mod, o)
+				end,
+				CreateTextList = function(_, o)
+					o = o or {}; o.Darker = true
+					if type(mod.CreateTextList) == "function" then return mod:CreateTextList(o) end
+					return stubTextList(mod, o)
+				end,
+				CreateMultiDropdown = function(_, o)
+					o = o or {}; o.Darker = true
+					if type(mod.CreateMultiDropdown) == "function" then return mod:CreateMultiDropdown(o) end
+					return stubMulti(mod, o)
+				end,
+				CreateTwoSlider = function(_, o)
+					o = o or {}
+					if type(mod.CreateTwoSlider) == "function" then return mod:CreateTwoSlider(o) end
+					if type(mod.CreateSlider) == "function" then
+						local s = mod:CreateSlider({
+							Name = o.Name or "Range",
+							Min = o.Min or 0,
+							Max = o.Max or 1000,
+							Default = o.DefaultMax or o.DefaultMin or 0,
+							Tooltip = o.Tooltip,
+						})
+						s.MinValue = o.DefaultMin or 0
+						s.MaxValue = s.Value
+						return s
+					end
+					return stubTwoSlider(mod, o)
+				end,
+				CreateColorSlider = function(_, o)
+					if type(mod.CreateColorSlider) == "function" then return mod:CreateColorSlider(o) end
+					return {Hue=0,Sat=1,Value=1,Opacity=1,Object={Visible=true}}
+				end,
+			}
+		end
+		if type(Killaura.CreateGroup) ~= "function" then
+			Killaura.CreateGroup = function(self, opts)
+				opts = opts or {}
+				local grp
+				if type(self.CreateToggle) == "function" then
+					grp = self:CreateToggle({
+						Name = opts.Name,
+						Default = opts.Default,
+						Tooltip = opts.Tooltip,
+						Function = opts.Function,
+					})
+				else
+					grp = stubToggle(self, opts)
+				end
+				grp = grp or stubToggle(self, opts)
+				local proxy = childProxy(self)
+				for k, v in pairs(proxy) do
+					grp[k] = v
+				end
+				return grp
+			end
+		end
+		if type(Killaura.CreateMultiDropdown) ~= "function" then
+			Killaura.CreateMultiDropdown = function(self, opts) return stubMulti(self, opts) end
+		end
+		if type(Killaura.CreateTwoSlider) ~= "function" then
+			Killaura.CreateTwoSlider = function(self, opts)
+				return childProxy(self).CreateTwoSlider(self, opts)
+			end
+		end
+		if type(Killaura.CreateTextList) ~= "function" then
+			Killaura.CreateTextList = function(self, opts) return stubTextList(self, opts) end
+		end
+	end
+
 	Targets = Killaura:CreateTargets({
 		Players = true,
 		NPCs = true
@@ -22809,6 +22945,29 @@ end)
 ]]
 
 run(function()
+
+-- safe chest util for AutoBank when game util.Chest is missing
+if type(util) ~= "table" then util = {} end
+if type(util.Chest) ~= "table" then
+	util.Chest = {
+		Range = 20,
+		OwnFolder = function() return nil end,
+		InRange = function() return false end,
+		Observe = function() end,
+		Give = function() return false end,
+		Take = function() end,
+		Entries = function() return {} end,
+	}
+end
+if type(util.Studs) ~= "function" then
+	util.Studs = function(val)
+		return val == 1 and "stud" or "studs"
+	end
+end
+if type(util.Shop) ~= "table" then
+	util.Shop = { ChestScreenOpen = function() return false end }
+end
+
 	local AutoBank
 	local Whitelist
 	local ChestRange
@@ -25127,7 +25286,7 @@ run(function()
 				end
 			end
 		end
-		if Animation.Enabled and tick() - (store.lastBreakerAnimation or 0) >= 0.18 then
+		if (Animation and Animation.Enabled) and tick() - (store.lastBreakerAnimation or 0) >= 0.18 then
 			store.lastBreakerAnimation = tick()
 			task.spawn(function()
 				local animation
@@ -26700,7 +26859,7 @@ run(function()
             bedwars.Client:Get(remotes.CollectCollectableEntity).instance:FireServer({ id = metalId })
         end)
 
-        if Animation.Enabled then
+        if Animation and Animation.Enabled then
             local currentTick = tick()
             if not animationDebounce[metalId] or (currentTick - animationDebounce[metalId]) >= 0.5 then
                 animationDebounce[metalId] = currentTick
@@ -26753,7 +26912,7 @@ run(function()
 							end
 							if collectMetal(v) then
 								collectedThisCycle = true
-								if Animation.Enabled then
+								if Animation and Animation.Enabled then
 									task.wait(0.15)
 								end
 							end
@@ -26761,7 +26920,7 @@ run(function()
 					end
 				end
                 
-                task.wait(collectedThisCycle and (Animation.Enabled and 0.3 or 0.05) or 0.5)
+                task.wait(collectedThisCycle and ((Animation and Animation.Enabled) and 0.3 or 0.05) or 0.5)
             end
             
             collectionActive = false
@@ -30246,7 +30405,7 @@ run(function()
     local function collectStar(star)
         if not star or not star.Parent then return end
         
-        if Animation.Enabled and entitylib.isAlive then
+        if (Animation and Animation.Enabled) and entitylib.isAlive then
             bedwars.GameAnimationUtil:playAnimation(lplr, bedwars.AnimationType.PUNCH)
             bedwars.ViewmodelController:playAnimation(bedwars.AnimationType.FP_USE_ITEM)
         end
@@ -44122,7 +44281,7 @@ run(function()
 	end
 
 	local function doFastHits()
-		if not FastHits or not FastHits.Enabled then return end
+		if not FastHits or not (FastHits and FastHits.Enabled) then return end
 		if not SilentAura or not SilentAura.Enabled then return end
 		if not entitylib.isAlive then return end
 
@@ -44151,7 +44310,7 @@ run(function()
 		table.clear(ProjectileDelay)
 
 		autoShootLoop = task.spawn(function()
-			while SilentAura and SilentAura.Enabled and FastHits and FastHits.Enabled do
+			while SilentAura and SilentAura.Enabled and FastHits and (FastHits and FastHits.Enabled) do
 				pcall(doFastHits)
 				task.wait(0.075)
 			end
@@ -44374,7 +44533,7 @@ run(function()
 					end)
 				end
 
-				if FastHits and FastHits.Enabled then
+				if FastHits and (FastHits and FastHits.Enabled) then
 					startAutoShootLoop()
 				end
 
@@ -44654,7 +44813,7 @@ run(function()
 		if AirHit and AirHit.Enabled and AirHitsChance and AirHitsChance.Object then
 			AirHitsChance.Object.Visible = true
 		end
-		if FastHits and FastHits.Enabled then
+		if FastHits and (FastHits and FastHits.Enabled) then
 			if ArrowCharge then ArrowCharge.Object.Visible = true end
 			if LegitSwitch then LegitSwitch.Object.Visible = true end
 			if Arrows then Arrows.Object.Visible = true end

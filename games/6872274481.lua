@@ -3595,7 +3595,7 @@ run(function()
 								Wallcheck = Targets.Walls.Enabled,
 								Players = Targets.Players.Enabled,
 								NPCs = Targets.NPCs.Enabled,
-								Sort = sortmethods[Sort.Value]
+								Sort = sortmethods[(Sort and Sort.Value) or "Distance"]
 							})
 
 							if found then
@@ -8025,12 +8025,13 @@ run(function()
 							if not Entity.isAlive or (os.clock() - ScanClock) >= ScanInterval then
 								ScanSettings.Origin = Root.Position
 								ScanSettings.Range = SwingRange.Value
-								ScanSettings.Wallcheck = Targets.Walls.Enabled or nil
+								ScanSettings.Wallcheck = Targets and Targets.Walls and Targets.Walls.Enabled or nil
 								ScanSettings.Part = "RootPart"
-								ScanSettings.Players = Targets.Players.Enabled
-								ScanSettings.NPCs = Targets.NPCs.Enabled
-								ScanSettings.Priority = Targets.Priority.Value
-								ScanSettings.Sort = sortmethods[Sort.Value]
+								ScanSettings.Players = not Targets or not Targets.Players or Targets.Players.Enabled
+								ScanSettings.NPCs = Targets and Targets.NPCs and Targets.NPCs.Enabled
+								ScanSettings.Priority = Targets and Targets.Priority and Targets.Priority.Value
+								local sortKey = (Sort and Sort.Value) or "Distance"
+								ScanSettings.Sort = (sortmethods and (sortmethods[sortKey] or sortmethods.Distance or sortmethods.Health)) or nil
 								Entities = Entity.AllPosition(ScanSettings)
 								ScanClock = os.clock()
 							end
@@ -8652,8 +8653,12 @@ run(function()
 	})
 	Sort = Killaura:CreateDropdown({
 		Name = "Target Mode",
-		List = Methods
+		List = Methods,
+		Default = Methods[1] or "Distance"
 	})
+	if not Sort or Sort.Value == nil then
+		Sort = { Value = "Distance" }
+	end
 	FastHits = Killaura:CreateGroup({
 		Name = "Fast Hits",
 		Default = false,
@@ -19852,7 +19857,7 @@ run(function()
 						Players = Targets.Players.Enabled,
 						NPCs = Targets.NPCs.Enabled,
 						Limit = 1,
-						Sort = sortmethods[Sort.Value]
+						Sort = sortmethods[(Sort and Sort.Value) or "Distance"]
 					})
 
 					if #plrs > 0 and plrs[1].Player then
@@ -28336,7 +28341,7 @@ run(function()
 			Part = "RootPart",
 			Players = Targets and Targets.Players.Enabled or true,
 			NPCs = Targets and Targets.NPCs.Enabled or true,
-			Sort = sortmethods and Sort and sortmethods[Sort.Value] or nil
+			Sort = sortmethods and Sort and sortmethods[(Sort and Sort.Value) or "Distance"] or nil
 		})
 
 		turretTargets[turret] = ent
@@ -43401,7 +43406,7 @@ run(function()
 			NPCs = Targets.NPCs.Enabled,
 			Wallcheck = Targets.Walls.Enabled,
 			Origin = entitylib.isAlive and (shootpos or entitylib.character.RootPart.Position) or Vector3.zero,
-			Sort = sortmethods[Sort.Value]
+			Sort = sortmethods[(Sort and Sort.Value) or "Distance"]
 		})
 		if not plr then return end
 
@@ -44277,7 +44282,7 @@ run(function()
 			Players = Targets.Players.Enabled,
 			NPCs = Targets.NPCs.Enabled,
 			Limit = limitCount * 2,
-			Sort = sortmethods[Sort.Value] or sortmethods['Distance']
+			Sort = sortmethods[(Sort and Sort.Value) or "Distance"] or sortmethods['Distance']
 		})
 		local targets = {}
 		for _, ent in list do
@@ -44495,7 +44500,7 @@ run(function()
 							Players = Targets.Players.Enabled,
 							NPCs = Targets.NPCs.Enabled,
 							Limit = maxCount * 2,
-							Sort = sortmethods[Sort.Value] or sortmethods['Distance']
+							Sort = sortmethods[(Sort and Sort.Value) or "Distance"] or sortmethods['Distance']
 						})
 
 						local function passesAngle(v)
@@ -51343,7 +51348,7 @@ run(function()
 			Players = Targets.Players.Enabled,
 			NPCs = Targets.NPCs.Enabled,
 			Origin = localPosition,
-			Sort = sortmethods[Sort.Value]
+			Sort = sortmethods[(Sort and Sort.Value) or "Distance"]
 		})
 		if not ent then return nil end
 	
@@ -55145,6 +55150,32 @@ end)
 run(function()
 	local MetalDetectorSpy
 	local TeamCheckToggle
+
+	if not vape.Categories.KitSpy then
+		pcall(function()
+			if vape.CreateCategory then
+				vape.Categories.KitSpy = vape:CreateCategory({ Name = "KitSpy" })
+			end
+		end)
+		if not vape.Categories.KitSpy then
+			vape.Categories.KitSpy = vape.Categories.Render or vape.Categories.Kits or vape.Categories.Blatant or vape.Categories.Utility
+		end
+		if not vape.Categories.KitSpy then
+			vape.Categories.KitSpy = {
+				CreateModule = function(_, opts)
+					return {
+						Enabled = false,
+						Options = {},
+						CreateToggle = function() return {Enabled = false, Object = {Visible = false}} end,
+						CreateSlider = function() return {Value = 0, Object = {Visible = false}} end,
+						CreateDropdown = function() return {Value = "", Object = {Visible = false}} end,
+						Clean = function() end,
+						Toggle = function() end,
+					}
+				end
+			}
+		end
+	end
 	
 	MetalDetectorSpy = vape.Categories.KitSpy:CreateModule({
 		Name = 'MetalDetectorSpy',
@@ -57120,7 +57151,12 @@ run(function()
     local NoSlow
     local StackMode
     
-    local Legit = (bedwars.DragonSlayerController and bedwars.DragonSlayerController.hasEligiblePunchTarget and getFunctionRange(bedwars.DragonSlayerController.hasEligiblePunchTarget)) or 14.4
+    local Legit = 14.4
+    pcall(function()
+        if type(getFunctionRange) == "function" and bedwars.DragonSlayerController and bedwars.DragonSlayerController.hasEligiblePunchTarget then
+            Legit = getFunctionRange(bedwars.DragonSlayerController.hasEligiblePunchTarget) or 14.4
+        end
+    end)
     local modifier, old
     local noSlowUntil = 0
     
@@ -62628,7 +62664,7 @@ run(function()
 			NPCs = Targets.NPCs.Enabled,
 			Wallcheck = Targets.Walls.Enabled,
 			Origin = entitylib.isAlive and (shootpos or entitylib.character.RootPart.Position) or Vector3.zero,
-			Sort = sortmethods[Sort.Value]
+			Sort = sortmethods[(Sort and Sort.Value) or "Distance"]
 		})
 		if not plr then return end
 
@@ -66216,12 +66252,21 @@ run(function()
 		Tooltip = "Which loop drives playback movement",
 	})
 
-	local recordList = replayModule:CreateMultiDropdown({
-		Name = "Record",
-		List = {"Entities", "Animations", "Armor", "Damage effects", "Sounds"},
-		Default = {"Entities", "Animations", "Armor", "Damage effects", "Sounds"},
-		Tooltip = 'What to record',
-	})
+	local recordList
+	if type(replayModule.CreateMultiDropdown) == "function" then
+		recordList = replayModule:CreateMultiDropdown({
+			Name = "Record",
+			List = {"Entities", "Animations", "Armor", "Damage effects", "Sounds"},
+			Default = {"Entities", "Animations", "Armor", "Damage effects", "Sounds"},
+			Tooltip = 'What to record',
+		})
+	else
+		local en = {Entities=true, Animations=true, Armor=true, ["Damage effects"]=true, Sounds=true}
+		recordList = {
+			Has = function(_, name) return en[name] == true end,
+			ListEnabled = {"Entities", "Animations", "Armor", "Damage effects", "Sounds"},
+		}
+	end
 	local function recordFlag(name)
 		return setmetatable({}, {__index = function(_, key)
 			if key == "Enabled" then

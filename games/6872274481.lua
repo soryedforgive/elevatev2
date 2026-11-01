@@ -8013,7 +8013,7 @@ run(function()
 				end
 	
 				local BoxData = {}
-				local FrameCount, FrameWindow, FrameTime = 0, tick(), HighHitreg.Enabled and RunService.Heartbeat:Wait() or 1 / 240
+				local FrameCount, FrameWindow, FrameTime = 0, tick(), (HighHitreg and HighHitreg.Enabled) and RunService.Heartbeat:Wait() or 1 / 240
 				local FrameStep: number = FrameTime
 				if not Killaura.Enabled or Session ~= Current then
 					return
@@ -8105,11 +8105,11 @@ run(function()
 								local DisplayName: string = SwordMeta and SwordMeta.displayName or ""
 								local FuryMultiplier: number = (bedwars.StatusEffectUtil and bedwars.StatusEffectUtil.isActive and bedwars.StatusEffectUtil:isActive(LocalPlayer.Character, "fury_potion")) and FuryScale or 1
 								local SwordSpeed: number = SwordMeta and SwordMeta.sword and SwordMeta.sword.attackSpeed or 0.3
-								local Spacing, SpeedScale, GapMin, AttackCooldown, Stock = SwordTiming.Calculate(SwordSpeed, FuryMultiplier, HighHitreg.Enabled, HitBudget)
-								local Quantized: boolean = Stock and HighHitreg.Enabled and Hitreg.Value ~= "Burst" and HitregTiming.AlignFrames and FrameTime > 1 / 30
+								local Spacing, SpeedScale, GapMin, AttackCooldown, Stock = SwordTiming.Calculate(SwordSpeed, FuryMultiplier, (HighHitreg and HighHitreg.Enabled), HitBudget)
+								local Quantized: boolean = Stock and (HighHitreg and HighHitreg.Enabled) and ((Hitreg and Hitreg.Value) or "Normal") ~= "Burst" and HitregTiming.AlignFrames and FrameTime > 1 / 30
 								local Variation: number = math.max(HitregTiming.Spread, tick() < HitregTiming.PeakUntil and HitregTiming.Peak or 0)
 								local Margin: number = 0
-								if Stock and HighHitreg.Enabled and Hitreg.Value ~= "Burst" then
+								if Stock and (HighHitreg and HighHitreg.Enabled) and ((Hitreg and Hitreg.Value) or "Normal") ~= "Burst" then
 									local Reserve: number = Quantized and FrameTime * 0.5 or 0
 									local Minimum: number = not Quantized and HitregTiming.MinimumMargin or 0
 									local BootSamples: number = Quantized and math.min(HitregTiming.BootSamples, HitregTiming.FrameBootSamples) or HitregTiming.BootSamples
@@ -8120,16 +8120,16 @@ run(function()
 									local Jitter: number = Variation > HitregTiming.Noise and math.clamp(Variation * Scale - math.max(Spacing - HitFloor * SpeedScale, 0) + Reserve, 0, HitregTiming.Margin) or 0
 									Margin = math.max(Minimum, Warmup, Latency, Jitter)
 								end
-								if Stock and HighHitreg.Enabled then
-									GapMin = math.max(GapMin + GhostDelay + Margin, AttackSpeed.Value)
+								if Stock and (HighHitreg and HighHitreg.Enabled) then
+									GapMin = math.max(GapMin + GhostDelay + Margin, ((AttackSpeed and AttackSpeed.Value) or 0))
 								end
-								local Band: number = (HighHitreg.Enabled and 10 / 34 or 10 / 33) * SpeedScale
-								local BandFloor: number = math.max(HighHitreg.Enabled and 10 / 35 or 10 / 34, CleanFloor) * SpeedScale
+								local Band: number = ((HighHitreg and HighHitreg.Enabled) and 10 / 34 or 10 / 33) * SpeedScale
+								local BandFloor: number = math.max((HighHitreg and HighHitreg.Enabled) and 10 / 35 or 10 / 34, CleanFloor) * SpeedScale
 								local Frames: number = math.floor(Band / FrameTime)
 								if Stock and (math.ceil(Spacing / FrameTime) * FrameTime) > Band and (Frames * FrameTime) >= BandFloor then
 									Spacing = math.max((Frames * FrameTime) - (FrameTime * 0.5), GapFloor * SpeedScale)
 								end
-								local Precise: boolean = Stock and HighHitreg.Enabled and Hitreg.Value ~= "Burst" and not Quantized and (math.ceil(Spacing / FrameTime) * FrameTime) > Band
+								local Precise: boolean = Stock and (HighHitreg and HighHitreg.Enabled) and ((Hitreg and Hitreg.Value) or "Normal") ~= "Burst" and not Quantized and (math.ceil(Spacing / FrameTime) * FrameTime) > Band
 								local Reach: number = getReach(Sword.tool)
 								local RangeLimit: number = GetRangeLimit(Reach)
 	
@@ -8217,18 +8217,35 @@ run(function()
 									end
 	
 									ServerNow = ServerNow or workspace:GetServerTimeNow()
-									local GameCooldown: number = math.max((bedwars.SwordController.lastAttack + AttackCooldown) - ServerNow, 0)
-									local HitDelay: number = Hitreg.Value == "Burst" and math.max(GhostDelay, AttackSpeed.Value, BurstWait) or math.max(HitBudget, Spacing + GhostDelay + Margin, AttackSpeed.Value, GameCooldown)
-									local Deadline: number = math.max(SwingCooldown + HitDelay, LastHit + GapMin, tick() + GameCooldown)
+									local lastAtk = (bedwars.SwordController and bedwars.SwordController.lastAttack) or 0
+									local atkData = tonumber(AttackData) or 0
+									local GameCooldown: number = math.max((lastAtk + atkData) - ServerNow, 0)
+									local hitregVal2 = (Hitreg and Hitreg.Value) or "Normal"
+									local atkSpd = tonumber(AttackSpeed and AttackSpeed.Value) or 0
+									local gDelay = tonumber(GhostDelay) or 0
+									local marg = tonumber(Margin) or 0
+									local space = tonumber(Spacing) or 0.28
+									local hBudget = tonumber(HitBudget) or 0.2
+									local gMin = tonumber(GapMin) or 0.1
+									local bWait = tonumber(BurstWait) or 0
+									local sCooldown = tonumber(SwingCooldown) or 0
+									local lHit = tonumber(LastHit) or 0
+									local HitDelay: number
+									if hitregVal2 == "Burst" then
+										HitDelay = math.max(gDelay, atkSpd, bWait)
+									else
+										HitDelay = math.max(hBudget, space + gDelay + marg, atkSpd, GameCooldown)
+									end
+									local Deadline: number = math.max(sCooldown + HitDelay, lHit + gMin, tick() + GameCooldown)
 									local Tracked: boolean = false
-									if Hitreg.Value ~= "Burst" then
+									if ((Hitreg and Hitreg.Value) or "Normal") ~= "Burst" then
 										Tracked = CombatCache.Tracked[v.Character] or type(v.Character:GetAttribute("LastDamageTakenTime")) == "number"
 										if Tracked then
 											CombatCache.Tracked[v.Character] = true
 										end
 									end
 									local LatencyGuard, Waiting = false, false
-									if Tracked and Stock and HighHitreg.Enabled then
+									if Tracked and Stock and (HighHitreg and HighHitreg.Enabled) then
 										Ping = Ping or LocalPlayer:GetNetworkPing()
 										LatencyGuard = Ping >= 0.12
 									end
@@ -8273,15 +8290,15 @@ run(function()
 										LastAttack = tick()
 										store.attackReach = (Delta.Magnitude * 100) // 1 / 100
 										store.attackReachUpdate = tick() + 1
-										SwingCooldown = math.max(SwingCooldown + HitDelay, tick() - (Stock and HighHitreg.Enabled and Hitreg.Value ~= "Burst" and math.min(FrameTime, HitDelay - HitFloor * SpeedScale) or 0))
+										SwingCooldown = math.max(SwingCooldown + HitDelay, tick() - (Stock and (HighHitreg and HighHitreg.Enabled) and ((Hitreg and Hitreg.Value) or "Normal") ~= "Burst" and math.min(FrameTime, HitDelay - HitFloor * SpeedScale) or 0))
 										LastHit = tick()
-										if Hitreg.Value == "Burst" then
+										if ((Hitreg and Hitreg.Value) or "Normal") == "Burst" then
 											BurstShots += 1
 											if BurstShots >= BurstHits.Value then
 												BurstShots = 0
-												BurstWait = math.max(BurstDelay.Value / 1000, (BurstHits.Value * HitBudget) - ((BurstHits.Value - 1) * math.max(GhostDelay, AttackSpeed.Value, 0.03)))
+												BurstWait = math.max(BurstDelay.Value / 1000, (BurstHits.Value * HitBudget) - ((BurstHits.Value - 1) * math.max(GhostDelay, ((AttackSpeed and AttackSpeed.Value) or 0), 0.03)))
 											else
-												BurstWait = math.max(GhostDelay, AttackSpeed.Value, 0.03)
+												BurstWait = math.max(GhostDelay, ((AttackSpeed and AttackSpeed.Value) or 0), 0.03)
 											end
 										end
 										if Hit then
@@ -8298,7 +8315,7 @@ run(function()
 												if HitregTiming.MatchTransit and not ConfirmMin then
 													Timeout = math.max(Timeout, GetHitLifetime())
 												end
-												if Stock and HighHitreg.Enabled and Hitreg.Value ~= "Burst" and HitregTiming.RecoveryCap > 0 then
+												if Stock and (HighHitreg and HighHitreg.Enabled) and ((Hitreg and Hitreg.Value) or "Normal") ~= "Burst" and HitregTiming.RecoveryCap > 0 then
 													Timeout = math.max(Timeout, FrameTime * 2 + 0.1, (ConfirmMin or 0) + HitregTiming.Spread + FrameTime + 0.1)
 												end
 												table.insert(GhostPending, tick() + Timeout)
@@ -8419,7 +8436,7 @@ run(function()
 	
 						do
 							local Ghosted: boolean = false
-							local Recovery: boolean = HighHitreg.Enabled and Hitreg.Value ~= "Burst" and SwordMeta and SwordMeta.sword and SwordMeta.sword.attackSpeed == 0.3 and HitregTiming.RecoveryCap > 0 or false
+							local Recovery: boolean = (HighHitreg and HighHitreg.Enabled) and ((Hitreg and Hitreg.Value) or "Normal") ~= "Burst" and SwordMeta and SwordMeta.sword and SwordMeta.sword.attackSpeed == 0.3 and HitregTiming.RecoveryCap > 0 or false
 							if #Attacked == 0 then
 								table.clear(GhostPending)
 							end
@@ -8433,12 +8450,12 @@ run(function()
 								GhostWindow = tick() + 5
 								if GhostCount > (Recovery and 0 or 1) and tick() > GhostStep then
 									GhostStep = tick() + 1
-									GhostHold = tick() + (Recovery and HitregTiming.MarginHold or HighHitreg.Enabled and 2 or 10)
-									GhostDelay = math.min(GhostDelay + (Recovery and HitregTiming.RecoveryStep or HighHitreg.Enabled and 0.001 or 0.003), Recovery and HitregTiming.RecoveryCap or HighHitreg.Enabled and (10 / 34 - CleanFloor) or 0.1)
+									GhostHold = tick() + (Recovery and HitregTiming.MarginHold or (HighHitreg and HighHitreg.Enabled) and 2 or 10)
+									GhostDelay = math.min(GhostDelay + (Recovery and HitregTiming.RecoveryStep or (HighHitreg and HighHitreg.Enabled) and 0.001 or 0.003), Recovery and HitregTiming.RecoveryCap or (HighHitreg and HighHitreg.Enabled) and (10 / 34 - CleanFloor) or 0.1)
 								end
 							elseif GhostDelay > 0 and tick() > GhostHold then
-								GhostHold = tick() + (Recovery and HitregTiming.MarginHold or HighHitreg.Enabled and 2 or 10)
-								GhostDelay = math.max(GhostDelay - (HighHitreg.Enabled and 0.001 or 0.003), 0)
+								GhostHold = tick() + (Recovery and HitregTiming.MarginHold or (HighHitreg and HighHitreg.Enabled) and 2 or 10)
+								GhostDelay = math.max(GhostDelay - ((HighHitreg and HighHitreg.Enabled) and 0.001 or 0.003), 0)
 							end
 						end
 	
@@ -66955,4 +66972,3 @@ run(function()
 		Tooltip = 'How long to keep sword after heal before next cycle'
 	})
 end)
-

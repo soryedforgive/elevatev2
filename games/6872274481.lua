@@ -7534,28 +7534,21 @@ run(function()
 		table.sort(sortlist)
 	end
 
-	-- Locked fast timing: sit on rate-limit (~3.5 APS) and never slow down after first hits
+	-- Fixed aggressive cadence (~5 APS / 0.2s). No adaptive slowdown.
 	local SwordTimingFallback = {
-		SafeSpacing = 0.286,
-		HighSpacing = 0.286,
-		HitFloor = 0.286,
-		GapFloor = 0.286,
-		ArrivalFloor = 0.26,
-		CooldownCorrection = (0.017999999225139618 / 10) + 0.013412
+		SafeSpacing = 0.2,
+		HighSpacing = 0.2,
+		HitFloor = 0.2,
+		GapFloor = 0.2,
+		ArrivalFloor = 0.18,
+		CooldownCorrection = (0.017999999225139618 / 10) + 0.018
 	}
-	local WeaponSpacing = {[0.21] = 0.21, [0.25] = 0.25, [0.35] = 0.33, [0.4] = 0.34, [0.6] = 0.55}
+	local WeaponSpacing = {[0.21] = 0.18, [0.25] = 0.2, [0.35] = 0.28, [0.4] = 0.3, [0.6] = 0.48}
 	function SwordTimingFallback.Calculate(SwordSpeed, Fury, High, Budget)
 		local Stock = SwordSpeed == 0.3
-		Budget = math.clamp(tonumber(Budget) or 0.286, 0.17, 0.34)
-		-- Always lock spacing to rate budget so first-second speed = sustained speed
-		local Spacing = Budget
-		if not Stock then
-			Spacing = math.max(WeaponSpacing[SwordSpeed] or SwordSpeed, Budget)
-		end
+		local Spacing = Stock and 0.2 or (WeaponSpacing[SwordSpeed] or math.min(SwordSpeed or 0.3, 0.28))
 		Spacing = Spacing * (tonumber(Fury) or 1)
-		local Scale = 1
-		local Gap = Spacing
-		return Spacing, Scale, Gap, math.max((SwordSpeed or 0.3) * (Fury or 1) - SwordTimingFallback.CooldownCorrection, 0), Stock
+		return Spacing, 1, Spacing, math.max((SwordSpeed or 0.3) * (Fury or 1) - SwordTimingFallback.CooldownCorrection, 0), Stock
 	end
 	local LocalPlayer = lplr
 	local Entity = entitylib
@@ -7626,15 +7619,15 @@ run(function()
 	local HitregTiming = {
 		Window = 8,
 		FloorWindow = 32,
-		ExcessCap = 0,
+		ExcessCap = 0.25,
 		Spread = 0,
 		Noise = 0.03,
 		Margin = 0,
 		AlignFrames = false,
-		MatchTransit = false,
+		MatchTransit = true,
 		Peak = 0,
 		PeakUntil = 0,
-		MarginHold = 0,
+		MarginHold = 2,
 		MinimumMargin = 0,
 		ColdMargin = 0,
 		BootSamples = 0,
@@ -7655,9 +7648,9 @@ run(function()
 	local SwordSwingMiss = {FireServer = function() end}
 	local ProjectileRemote = bedwars.Handler:Get("ProjectileFire")
 	local FastHitPending, LastShot = nil, 0
-	local ArrivalFloor: number = SwordTiming.ArrivalFloor or 0.26
-	local HitBudget, HitFloor, GapFloor = 0.286, SwordTiming.HitFloor or 0.286, SwordTiming.GapFloor or 0.286
-	local CleanFloor: number = SwordTiming.HighSpacing or 0.286
+	local ArrivalFloor: number = 0.18
+	local HitBudget, HitFloor, GapFloor = 0.2, 0.2, 0.2
+	local CleanFloor: number = 0.2
 	local TargetLag: number = 0.12
 	local SelfLag: number = 0.09
 	local SelfLagLow: number = 0.07
@@ -7793,22 +7786,8 @@ run(function()
 	task.spawn(function()
 		AttackRemote = bedwars.Handler:Get("SwordHit")
 		SwordSwingMiss = bedwars.Handler:Get("SwordSwingMiss")
-		local ok, rate = pcall(function()
-			return AttackRemote:GetRateLimit()
-		end)
-		if ok and type(rate) == "number" and rate > 0 then
-			-- Lock to server rate (e.g. 210/min ≈ 3.5 APS) — don't go under or it pauses later
-			HitBudget = 60 / rate
-		else
-			HitBudget = 0.286
-		end
-		HitFloor = HitBudget
-		GapFloor = HitBudget
-		CleanFloor = HitBudget
-		SwordTimingFallback.SafeSpacing = HitBudget
-		SwordTimingFallback.HighSpacing = HitBudget
-		SwordTimingFallback.HitFloor = HitBudget
-		SwordTimingFallback.GapFloor = HitBudget
+		-- Keep 0.2s (~5 APS). Do not raise to remote budget.
+		HitBudget = 0.2
 	end)
 	
 	local FireRates: {[string]: number} = {}
@@ -8034,7 +8013,7 @@ run(function()
 								end
 								TransitMin = math.min(TransitMin and (TransitMin + 0.001) or Transit, Transit)
 								ConfirmMin = math.min(ConfirmMin and (ConfirmMin + 0.001) or Confirmation, Confirmation)
-								HitDeadline = 0
+								HitDeadline = math.max(HitDeadline, Entry.sent + Entry.gap + math.clamp(Transit - TransitFloor, 0, HitregTiming.ExcessCap))
 								for _ = 1, Selected do
 									table.remove(HitPending, 1)
 								end
@@ -8203,10 +8182,11 @@ run(function()
 								local FuryMultiplier: number = bedwars.StatusEffectUtil:isActive(LocalPlayer.Character, "fury_potion") and FuryScale or 1
 								local SwordSpeed: number = SwordMeta and SwordMeta.sword and SwordMeta.sword.attackSpeed or 0.3
 								local Spacing, SpeedScale, GapMin, AttackCooldown, Stock = SwordTiming.Calculate(SwordSpeed, FuryMultiplier, HighHitreg.Enabled, HitBudget)
-								local Quantized: boolean = Stock and HighHitreg.Enabled and Hitreg.Value ~= "Burst" and HitregTiming.AlignFrames and FrameTime > 1 / 30
+								-- Force fixed ~5 APS; strip adaptive margin/ghost/band
+								Spacing = 0.2 * (FuryMultiplier or 1)
+								GapMin = math.max(Spacing, AttackSpeed.Value)
+								SpeedScale = 1
 								local Margin: number = 0
-								GapMin = math.max(HitBudget, AttackSpeed.Value)
-								Spacing = math.max(Spacing, HitBudget)
 								local Precise: boolean = false
 								local Reach: number = getReach(Sword.tool)
 								local RangeLimit: number = GetRangeLimit(Reach)
@@ -8296,10 +8276,9 @@ run(function()
 									end
 	
 									ServerNow = ServerNow or workspace:GetServerTimeNow()
-									local GameCooldown: number = math.max((bedwars.SwordController.lastAttack + AttackCooldown) - ServerNow, 0)
-									-- Fixed interval = HitBudget (rate limit). No ghost/margin/deadline creep.
-									local HitDelay: number = math.max(HitBudget, AttackSpeed.Value, GameCooldown)
-									local Deadline: number = math.max(LastHit + HitDelay, tick() + GameCooldown)
+									-- Fixed interval, no game-cooldown / ghost / deadline stalls
+									local HitDelay: number = math.max(0.2 * (FuryMultiplier or 1), AttackSpeed.Value)
+									local Deadline: number = LastHit + HitDelay
 									local Tracked: boolean = false
 									if Hitreg.Value ~= "Burst" then
 										Tracked = CombatCache.Tracked[v.Character] or type(v.Character:GetAttribute("LastDamageTakenTime")) == "number"

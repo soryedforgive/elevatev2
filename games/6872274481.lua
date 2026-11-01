@@ -7536,14 +7536,14 @@ run(function()
 
 	-- Used only when the real swordtiming library is missing (same constants as SilentAura).
 	local SwordTimingFallback = {
-		SafeSpacing = 0.255,
-		HighSpacing = 0.225,
+		SafeSpacing = 0.275,
+		HighSpacing = 0.265,
 		HitFloor = 0.292,
 		GapFloor = 0.2965,
 		ArrivalFloor = 0.274,
 		CooldownCorrection = (0.017999999225139618 / 10) + 0.013412
 	}
-	local WeaponSpacing = {[0.15] = 0.22, [0.25] = 0.24, [0.35] = 0.345, [0.4] = 0.341, [0.6] = 0.63}
+	local WeaponSpacing = {[0.25] = 0.22, [0.25] = 0.24, [0.35] = 0.345, [0.4] = 0.341, [0.6] = 0.63}
 	function SwordTimingFallback.Calculate(SwordSpeed, Fury, High, Budget)
 		local Stock = SwordSpeed == 0.3
 		local Normal = High and SwordTimingFallback.HighSpacing or SwordTimingFallback.SafeSpacing

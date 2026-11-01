@@ -7529,29 +7529,28 @@ run(function()
 		table.sort(sortlist)
 	end
 
-	-- Used only when the real swordtiming library is missing.
+	-- Used only when the real swordtiming library is missing (same constants as SilentAura).
 	local SwordTimingFallback = {
-		ArrivalFloor = 0.28,
-		HitFloor = 0.27,
-		GapFloor = 0.25,
-		HighSpacing = 0.28,
-		Calculate = function(SwordSpeed, Fury, High, Budget)
-			local Cooldown = math.max(SwordSpeed * Fury, 0.05)
-			local Scale = Cooldown / 0.3
-			local Stock = math.abs(SwordSpeed - 0.3) < 0.001
-			return Cooldown, Scale, 0.25 * Scale, Cooldown, Stock
-		end
+		SafeSpacing = 0.295,
+		HighSpacing = 0.285,
+		HitFloor = 0.292,
+		GapFloor = 0.2965,
+		ArrivalFloor = 0.274,
+		CooldownCorrection = (0.017999999225139618 / 10) + 0.013412
 	}
-	local LocalPlayer = lplr
-	local Entity = entitylib
-	local Camera = gameCamera
-	local TweenService = tweenService
-	local RunService = runService
-	local UserInputService = inputService
-	local PredictionLib = prediction
-	local TargetInfo = targetinfo
-	local getTinkerMount = bedwars.getTinkerMount
-	local watchProjectile = bedwars.watchProjectile
+	local WeaponSpacing = {[0.21] = 0.229, [0.25] = 0.249, [0.35] = 0.345, [0.4] = 0.341, [0.6] = 0.63}
+	function SwordTimingFallback.Calculate(SwordSpeed, Fury, High, Budget)
+		local Stock = SwordSpeed == 0.3
+		local Normal = High and SwordTimingFallback.HighSpacing or SwordTimingFallback.SafeSpacing
+		local Spacing = Stock and Normal or WeaponSpacing[SwordSpeed] or SwordSpeed + 0.03
+		Spacing = math.max(Spacing * Fury, Budget or 0)
+		local Scale = Spacing / (Stock and Normal or SwordTimingFallback.SafeSpacing)
+		local Gap = (Scale < 1 and SwordTimingFallback.GapFloor or SwordTimingFallback.HitFloor) * Scale
+		if Stock and High then
+			Gap = math.max(Gap, SwordTimingFallback.GapFloor, Budget or 0)
+		end
+		return Spacing, Scale, Gap, math.max(SwordSpeed * Fury - SwordTimingFallback.CooldownCorrection, 0), Stock
+	end
 	local SwordTiming = vape.Libraries.swordtiming or SwordTimingFallback
 	local Killaura
 	local Targets

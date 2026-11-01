@@ -74,7 +74,7 @@ local playersService = cloneref(game:GetService('Players'))
 local httpService = cloneref(game:GetService('HttpService'))
 local teleportService = cloneref(game:GetService('TeleportService'))
 
-local REPO = "soryedforgive/elevate"  -- same as myscript
+local REPO = "soryedforgive/elevatev2"
 local BRANCH = "main"
 local function downloadFile(path, func)
 	if not isfile(path) then

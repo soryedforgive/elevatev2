@@ -829,6 +829,33 @@ local sortmethods = {
 	end
 }
 
+local sortlist = {}
+for Name in sortmethods do
+	table.insert(sortlist, Name)
+end
+table.sort(sortlist)
+
+-- This GUI has no MultiDropdown, so build one out of toggles.
+local function createMultiDropdown(Module, Settings)
+	local Toggles, Object, Defaults = {}, {}, {}
+	for _, Name in Settings.Default or {} do
+		Defaults[Name] = true
+	end
+	for _, Name in Settings.List do
+		Toggles[Name] = Module:CreateToggle({
+			Name = (Settings.Name or "") .. " " .. Name,
+			Default = Defaults[Name] == true,
+			Darker = Settings.Darker,
+			Tooltip = Settings.Tooltip
+		})
+	end
+	function Object:Has(Name)
+		local Toggle = Toggles[Name]
+		return Toggle ~= nil and Toggle.Enabled == true
+	end
+	return Object
+end
+
 local function getSortList(priority)
 	local methods = {}
 	for _, v in ipairs(priority or {}) do
@@ -55099,7 +55126,7 @@ run(function()
 	local MetalDetectorSpy
 	local TeamCheckToggle
 	
-	MetalDetectorSpy = vape.Categories.KitSpy:CreateModule({
+	MetalDetectorSpy = (vape.Categories.KitSpy or vape.Categories.Kits or vape.Categories.Utility):CreateModule({
 		Name = 'MetalDetectorSpy',
 		Function = function(callback)
 			if callback then
@@ -55200,7 +55227,7 @@ run(function()
 	local BountyHunterSpy
 	local TeamCheckToggle
 	
-	BountyHunterSpy = vape.Categories.KitSpy:CreateModule({
+	BountyHunterSpy = (vape.Categories.KitSpy or vape.Categories.Kits or vape.Categories.Utility):CreateModule({
 		Name = 'BountyHunterSpy',
 		Function = function(callback)
 			if callback then
@@ -55309,7 +55336,7 @@ end)
 run(function()
 	local LuciaSpy
 	
-	LuciaSpy = vape.Categories.KitSpy:CreateModule({
+	LuciaSpy = (vape.Categories.KitSpy or vape.Categories.Kits or vape.Categories.Utility):CreateModule({
 		Name = 'LuciaSpy',
 		Function = function(callback)
 			if callback then
@@ -57029,7 +57056,7 @@ run(function()
 		fish_gold = "Gold Fish",
 	}
 	
-	FishermanESP = vape.Categories.KitSpy:CreateModule({
+	FishermanESP = (vape.Categories.KitSpy or vape.Categories.Kits or vape.Categories.Utility):CreateModule({
 		Name = "FishermanSpy",
 		Tooltip = 'shows what fish you are catching before the minigame starts',
 		Function = function(callback)		
@@ -66169,7 +66196,7 @@ run(function()
 		Tooltip = "Which loop drives playback movement",
 	})
 
-	local recordList = replayModule:CreateMultiDropdown({
+	local recordList = createMultiDropdown(replayModule, {
 		Name = "Record",
 		List = {"Entities", "Animations", "Armor", "Damage effects", "Sounds"},
 		Default = {"Entities", "Animations", "Armor", "Damage effects", "Sounds"},

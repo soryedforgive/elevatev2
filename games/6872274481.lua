@@ -7536,16 +7536,12 @@ run(function()
 
 	-- Used only when the real swordtiming library is missing (same constants as SilentAura).
 	local SwordTimingFallback = {
-		SafeSpacing = 0.12,
-		HighSpacing = 0.12,
-		HitFloor = 0.12,
-		GapFloor = 0.12,
-		ArrivalFloor = 0.1,
-		CooldownCorrection = 0.03
+		SafeSpacing = 0.08, HighSpacing = 0.08, HitFloor = 0.08, GapFloor = 0.08,
+		ArrivalFloor = 0.06, CooldownCorrection = 0.04
 	}
-	local WeaponSpacing = {[0.21] = 0.12, [0.25] = 0.14, [0.35] = 0.2, [0.4] = 0.22, [0.6] = 0.35}
+	local WeaponSpacing = {[0.21] = 0.08, [0.25] = 0.1, [0.35] = 0.15, [0.4] = 0.18, [0.6] = 0.3}
 	function SwordTimingFallback.Calculate(SwordSpeed, Fury, High, Budget)
-		return 0.12 * (tonumber(Fury) or 1), 1, 0.12 * (tonumber(Fury) or 1), 0, SwordSpeed == 0.3
+		return 0.08, 1, 0.08, 0, true
 	end
 	local LocalPlayer = lplr
 	local Entity = entitylib
@@ -7784,7 +7780,7 @@ run(function()
 	task.spawn(function()
 		AttackRemote = bedwars.Handler:Get("SwordHit")
 		SwordSwingMiss = bedwars.Handler:Get("SwordSwingMiss")
-		HitBudget = 0.12
+		HitBudget = 0.08
 	end)
 	
 	local FireRates: {[string]: number} = {}
@@ -8176,14 +8172,11 @@ run(function()
 								UpdateSelfReference(os.clock(), SendPosition)
 								local LocalFacing: Vector3 = Root.CFrame.LookVector * FlatScale
 								local DisplayName: string = SwordMeta and SwordMeta.displayName or ""
-								local FuryMultiplier: number = bedwars.StatusEffectUtil:isActive(LocalPlayer.Character, "fury_potion") and FuryScale or 1
-								local SwordSpeed: number = SwordMeta and SwordMeta.sword and SwordMeta.sword.attackSpeed or 0.3
-								local _, _, _, AttackCooldown, Stock = 0, 1, 0.12, 0, true
-								local Spacing = 0.12
-								local GapMin = 0.12
-								local SpeedScale = 1
-								local Margin = 0
-								local Precise = false
+								local FuryMultiplier: number = 1
+								local SwordSpeed: number = 0.3
+								local Spacing, SpeedScale, GapMin, AttackCooldown, Stock = 0.08, 1, 0.08, 0, true
+								local Margin: number = 0
+								local Precise: boolean = false
 								local Reach: number = getReach(Sword.tool)
 								local RangeLimit: number = GetRangeLimit(Reach)
 	
@@ -8271,9 +8264,11 @@ run(function()
 										continue
 									end
 	
-									ServerNow = ServerNow or workspace:GetServerTimeNow()
-									-- ~8 APS hard lock
-									if (tick() - LastHit) >= 0.12 then
+									-- Hard ~12.5 APS. No deadline/ghost/budget.
+									if (tick() - LastHit) < 0.08 then
+										continue
+									end
+									do
 										local CurrentRoot: BasePart? = LocalPlayer.Character and LocalPlayer.Character.PrimaryPart
 										if not Entity.isAlive or CurrentRoot ~= Root or not IsCombatTarget(v) then
 											continue
@@ -8283,43 +8278,23 @@ run(function()
 											continue
 										end
 										SendPosition = store.rootpart and store.rootpart.Position or CurrentRoot.Position
-										UpdateSelfReference(os.clock(), SendPosition)
 										Delta = v.RootPart.Position - CurrentRoot.Position
-										local TargetPosition, ServerDistance = GetTargetState(ActualRoot.Position, v.RootPart.AssemblyLinearVelocity)
-										local Flat: Vector3 = Delta * FlatScale
-										if ServerDistance > RangeLimit or AngleSlider.Value < 360 and Flat.Magnitude > 0.001 and math.acos(math.clamp((CurrentRoot.CFrame.LookVector * FlatScale):Dot(Flat.Unit), -1, 1)) > (math.rad(AngleSlider.Value) / 2) then
+										local TargetPosition = ActualRoot.Position
+										local ServerDistance = (TargetPosition - SendPosition).Magnitude
+										if ServerDistance > RangeLimit then
 											continue
 										end
-										local Airborne: boolean = (v.Humanoid and v.Humanoid.FloorMaterial == Enum.Material.Air) or math.abs(v.RootPart.AssemblyLinearVelocity.Y) > 0.01
-										local Hit: boolean = (not Airborne) or HitRandom:NextNumber(0, 100) <= AirHits:GetRandomValue()
-										local HitPosition, Direction = GetSelfClaim(TargetPosition, Reach)
+										local Hit = true
+										local HitPosition = SendPosition
+										local Direction = (TargetPosition - SendPosition)
+										if Direction.Magnitude > 0.001 then Direction = Direction.Unit else Direction = Vector3.new(0, 0, -1) end
 										bedwars.SwordController.lastAttack = workspace:GetServerTimeNow()
-										ServerNow = bedwars.SwordController.lastAttack
 										LastAttack = tick()
 										store.attackReach = (Delta.Magnitude * 100) // 1 / 100
 										store.attackReachUpdate = tick() + 1
 										SwingCooldown = tick()
 										LastHit = tick()
-										local Tracked = true
 										if Hit then
-											if Tracked then
-												local Lifetime: number = HitregTiming.MatchTransit and GetHitLifetime() or 1
-												local PendingLimit: number = HitregTiming.MatchTransit and math.max(8, math.ceil(Lifetime / Spacing) + 2) or 8
-												while HitPending[1] and ((HitregTiming.MatchTransit and (os.clock() - HitPending[1].timer) or (tick() - HitPending[1].sent)) > Lifetime or #HitPending >= PendingLimit) do
-													table.remove(HitPending, 1)
-												end
-												table.insert(HitPending, {target = v.Character, sent = LastHit, timer = os.clock(), clock = workspace:GetServerTimeNow(), gap = ArrivalFloor * SpeedScale})
-											end
-											if Tracked then
-												local Timeout: number = math.max(0.3 + (store.ping and store.ping.total or 0), LocalPlayer:GetNetworkPing() * 2 + 0.3)
-												if HitregTiming.MatchTransit and not ConfirmMin then
-													Timeout = math.max(Timeout, GetHitLifetime())
-												end
-												if Stock and HighHitreg.Enabled and Hitreg.Value ~= "Burst" and HitregTiming.RecoveryCap > 0 then
-													Timeout = math.max(Timeout, FrameTime * 2 + 0.1, (ConfirmMin or 0) + HitregTiming.Spread + FrameTime + 0.1)
-												end
-												table.insert(GhostPending, tick() + Timeout)
-											end
 											AttackRemote:Fire(nil, {
 												weapon = Sword.tool,
 												chargedAttack = {chargeRatio = 0},
@@ -8422,11 +8397,10 @@ run(function()
 							ScanClock = 0
 						end
 	
-						do
-							table.clear(GhostPending)
-							GhostDelay = 0
-							GhostCount = 0
-						end
+						GhostDelay = 0
+						GhostCount = 0
+						table.clear(GhostPending)
+						table.clear(HitPending)
 	
 						if #Attacked > 0 then
 							ContinueUntil = tick() + (ContinueSwing:GetRandomValue() / 1000)

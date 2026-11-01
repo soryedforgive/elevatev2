@@ -7457,8 +7457,9 @@ run(function()
 	-- INLINE swordtiming (Elevate library is often nil/wrong)
 	local WeaponSpacing = {[0.21]=0.229,[0.25]=0.249,[0.35]=0.345,[0.4]=0.341,[0.6]=0.63}
 	local SwordTiming = {
-		SafeSpacing = 0.295, HighSpacing = 0.285,
-		HitFloor = 0.292, GapFloor = 0.2965, ArrivalFloor = 0.274,
+		-- tighter floors = better continuous hitreg (standalone-like)
+		SafeSpacing = 0.288, HighSpacing = 0.275,
+		HitFloor = 0.278, GapFloor = 0.282, ArrivalFloor = 0.255,
 		CooldownCorrection = (0.017999999225139618 / 10) + 0.013412,
 	}
 	function SwordTiming.Calculate(Speed, FuryMultiplier, HighEnabled, Budget, Hits)
@@ -7542,22 +7543,22 @@ run(function()
 	local HitregTiming = {
 		Window = 8,
 		FloorWindow = 32,
-		ExcessCap = 0.25,
+		ExcessCap = 0.12,
 		Spread = 0,
-		Noise = 0.03,
-		Margin = 0,
+		Noise = 0.025,
+		Margin = 0.02,
 		AlignFrames = false,
 		MatchTransit = true,
 		Peak = 0,
 		PeakUntil = 0,
-		MarginHold = 2,
+		MarginHold = 1.25,
 		MinimumMargin = 0,
 		ColdMargin = 0,
 		BootSamples = 0,
 		FrameBootSamples = 2,
-		LatencyScale = 1,
-		RecoveryCap = 0,
-		RecoveryStep = 0.015
+		LatencyScale = 0.85,
+		RecoveryCap = 0.04,
+		RecoveryStep = 0.01
 	}
 	local function GetHitLifetime(): number
 		return math.max(2, LocalPlayer:GetNetworkPing() * 2 + 0.3, (ConfirmMin or 0) + HitregTiming.Spread + 0.5)
@@ -7578,15 +7579,15 @@ run(function()
 	end)
 	local FastHitPending, LastShot = nil, 0
 	local ArrivalFloor: number = SwordTiming.ArrivalFloor
-	local HitBudget, HitFloor, GapFloor = 0.2, SwordTiming.HitFloor, SwordTiming.GapFloor
+	local HitBudget, HitFloor, GapFloor = 0.24, SwordTiming.HitFloor, SwordTiming.GapFloor
 	local CleanFloor: number = SwordTiming.HighSpacing
-	local TargetLag: number = 0.12
-	local SelfLag: number = 0.09
-	local SelfLagLow: number = 0.07
-	local SelfLagHigh: number = 0.11
-	local ClaimLag: number = 0.05
-	local ServerReach: number = 3.6
-	local RangeMargin: number = 0.4
+	local TargetLag: number = 0.08
+	local SelfLag: number = 0.06
+	local SelfLagLow: number = 0.045
+	local SelfLagHigh: number = 0.08
+	local ClaimLag: number = 0.035
+	local ServerReach: number = 3.85
+	local RangeMargin: number = 0.25
 	local ClaimMargin: number = 1
 	local LagCap: number = 8
 	local TrailLength: number = 0.3
@@ -7734,7 +7735,10 @@ run(function()
 			if AttackRemote and type(AttackRemote.GetRateLimit) == "function" then
 				local ok, rate = pcall(function() return AttackRemote:GetRateLimit() end)
 				if ok and type(rate) == "number" and rate > 0 then
-					HitBudget = 60 / rate
+					-- Elevate remotes sometimes report weird limits; clamp to real sword cadence
+					local raw = 60 / rate
+					HitBudget = math.clamp(raw, 0.17, 0.34)
+					print("[elevate] Killaura HitBudget", HitBudget, "raw", raw, "rate", rate)
 					break
 				end
 			end
@@ -8442,7 +8446,7 @@ run(function()
 								if GhostCount > (Recovery and 0 or 1) and tick() > GhostStep then
 									GhostStep = tick() + 1
 									GhostHold = tick() + (Recovery and HitregTiming.MarginHold or HighHitreg.Enabled and 2 or 10)
-									GhostDelay = math.min(GhostDelay + (Recovery and HitregTiming.RecoveryStep or HighHitreg.Enabled and 0.001 or 0.003), Recovery and HitregTiming.RecoveryCap or HighHitreg.Enabled and (10 / 34 - CleanFloor) or 0.1)
+									GhostDelay = math.min(GhostDelay + (Recovery and HitregTiming.RecoveryStep or HighHitreg.Enabled and 0.0005 or 0.0015), Recovery and HitregTiming.RecoveryCap or HighHitreg.Enabled and 0.04 or 0.06)
 								end
 							elseif GhostDelay > 0 and tick() > GhostHold then
 								GhostHold = tick() + (Recovery and HitregTiming.MarginHold or HighHitreg.Enabled and 2 or 10)

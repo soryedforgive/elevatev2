@@ -125,10 +125,6 @@ if vape and not vape.Remove then
 		return module 
 	end
 end
-if not vape then
-	error("[elevate] shared.vape missing — run Elevate main before this bedwars script")
-end
-vape.Libraries = vape.Libraries or {}
 local entitylib = vape.Libraries.entity
 local targetinfo = vape.Libraries.targetinfo
 local sessioninfo = vape.Libraries.sessioninfo
@@ -167,974 +163,6 @@ local store = {
 	terraKickTime = 0,
 }
 getgenv().store = store
-
--- ===== AETHER LIBRARIES (real hitreg / util) =====
-do
-	local timing = {
-		SafeSpacing = 0.296,
-		HighSpacing = 0.2925,
-		HitFloor = 0.285,
-		GapFloor = 0.2915,
-		ArrivalFloor = 0.2747,
-		CooldownCorrection = (0.017999999225139618 / 10) + 0.013412
-	}
-	local weaponSpacing = {[0.21] = 0.229, [0.25] = 0.249, [0.35] = 0.345, [0.4] = 0.341, [0.6] = 0.63}
-	function timing.Calculate(speed, fury, high, budget, hits)
-		-- Aether API: high is boolean
-		local highOn = high == true or high == "Advanced Mode" or high == "Dynamic"
-		local stock = (type(speed) == "number") and math.abs(speed - 0.3) < 0.001
-		local normal = highOn and timing.HighSpacing or timing.SafeSpacing
-		local spacing = stock and normal or weaponSpacing[speed] or ((type(speed)=="number" and speed + 0.03) or normal)
-		local furyMul = 1
-		if type(fury) == "number" and fury > 0 then furyMul = fury end
-		if hits and hits ~= 35 then spacing = math.max(spacing, 10 / math.max(hits - 1, 1)) end
-		spacing = math.max(spacing * furyMul, budget or 0)
-		local scale = spacing / (stock and normal or timing.SafeSpacing)
-		local gap = (scale < 1 and timing.GapFloor or timing.HitFloor) * scale
-		if stock and highOn then gap = math.max(gap, timing.GapFloor * furyMul, budget or 0) end
-		return spacing, scale, gap, math.max((type(speed)=="number" and speed or 0.3) * furyMul - timing.CooldownCorrection, 0), stock
-	end
-	vape.Libraries.swordtiming = timing
-end
-
--- ===== FULL Elevate API polyfill (Group + MultiDropdown) =====
--- Elevate has Toggle/Slider/Dropdown/TwoSlider/Targets/TextList but NOT CreateGroup / CreateMultiDropdown.
-do
-	local function addMissingAPI(mod)
-		if type(mod) ~= "table" or mod.__elevateAetherAPI then return mod end
-		mod.__elevateAetherAPI = true
-
-		if type(mod.CreateGroup) ~= "function" then
-			function mod:CreateGroup(opts)
-				opts = opts or {}
-				local parent = self
-				local outer
-				if opts.Name then
-					outer = parent:CreateToggle({
-						Name = opts.Name,
-						Default = opts.Default == true,
-						Function = opts.Function,
-						Tooltip = opts.Tooltip,
-						Darker = opts.Darker
-					})
-				end
-				local group = {}
-				local function proxy(method)
-					return function(_, childOpts)
-						childOpts = childOpts or {}
-						childOpts.Darker = true
-						if type(parent[method]) == "function" then
-							return parent[method](parent, childOpts)
-						end
-						-- fallback stubs
-						if method == "CreateToggle" then
-							return {Enabled = childOpts.Default == true, Toggle = function() end}
-						elseif method == "CreateSlider" then
-							return {Value = childOpts.Default or childOpts.Min or 0, SetValue = function() end}
-						elseif method == "CreateTwoSlider" then
-							local o = {ValueMin = childOpts.DefaultMin or 0, ValueMax = childOpts.DefaultMax or 0}
-							function o:GetRandomValue() return self.ValueMin end
-							return o
-						elseif method == "CreateDropdown" then
-							return {Value = childOpts.List and childOpts.List[1]}
-						elseif method == "CreateTextList" then
-							return {ListEnabled = childOpts.Default or {}}
-						elseif method == "CreateMultiDropdown" then
-							local o = {ListEnabled = childOpts.Default or {}}
-							function o:Has(name)
-								for _, v in self.ListEnabled do
-									if tostring(v):lower() == tostring(name):lower() then return true end
-								end
-								return false
-							end
-							return o
-						elseif method == "CreateColorSlider" then
-							return {Hue = 0, Sat = 1, Value = 1, Opacity = 1}
-						elseif method == "CreateTextBox" then
-							return {Value = childOpts.Default or ""}
-						end
-						return {}
-					end
-				end
-				setmetatable(group, {
-					__index = function(_, k)
-						if k == "Enabled" then
-							return outer and outer.Enabled or false
-						end
-						if k == "CreateToggle" or k == "CreateSlider" or k == "CreateTwoSlider"
-							or k == "CreateDropdown" or k == "CreateTextList" or k == "CreateMultiDropdown"
-							or k == "CreateColorSlider" or k == "CreateTextBox" or k == "CreateButton"
-							or k == "CreateTargets" then
-							return proxy(k)
-						end
-					end
-				})
-				return group
-			end
-		end
-
-		if type(mod.CreateMultiDropdown) ~= "function" then
-			function mod:CreateMultiDropdown(opts)
-				opts = opts or {}
-				local list
-				if type(self.CreateTextList) == "function" then
-					list = self:CreateTextList({
-						Name = opts.Name,
-						Default = opts.Default or {},
-						Darker = opts.Darker,
-						Tooltip = opts.Tooltip
-					})
-				else
-					list = {ListEnabled = opts.Default or {}}
-				end
-				if type(list.Has) ~= "function" then
-					function list:Has(name)
-						for _, v in (self.ListEnabled or {}) do
-							if tostring(v):lower() == tostring(name):lower() then return true end
-						end
-						return false
-					end
-				end
-				return list
-			end
-		end
-
-		-- Ensure TwoSlider always has GetRandomValue
-		if type(mod.CreateTwoSlider) == "function" and not mod.__twoSliderWrapped then
-			mod.__twoSliderWrapped = true
-			local old = mod.CreateTwoSlider
-			mod.CreateTwoSlider = function(self, opts)
-				local s = old(self, opts)
-				if type(s) == "table" and type(s.GetRandomValue) ~= "function" then
-					function s:GetRandomValue()
-						if self.ValueMin ~= nil then return self.ValueMin end
-						return self.Value or 0
-					end
-				end
-				return s
-			end
-		end
-
-		return mod
-	end
-
-	local function patchCategory(cat)
-		if type(cat) ~= "table" or type(cat.CreateModule) ~= "function" or cat.__elevateAetherPatched then return end
-		cat.__elevateAetherPatched = true
-		local old = cat.CreateModule
-		cat.CreateModule = function(self, def)
-			if type(old) ~= "function" then
-				return nil
-			end
-			local ok, m = pcall(old, self, def)
-			if not ok then
-				warn("[elevate] CreateModule failed: ", m)
-				return nil
-			end
-			if type(m) == "table" then
-				return addMissingAPI(m)
-			end
-			return m
-		end
-	end
-
-	local function patchAll()
-		if not vape or not vape.Categories then return end
-		for _, cat in pairs(vape.Categories) do
-			patchCategory(cat)
-		end
-	end
-	patchAll()
-	-- also patch late-added categories
-	task.spawn(function()
-		for _ = 1, 30 do
-			task.wait(0.1)
-			pcall(patchAll)
-		end
-	end)
-end
-
-
--- Real Aether bedwarsutil
-pcall(function()
-	local src = [=[
-local cloneref = cloneref or function(obj)
-	return obj
-end
-
-local playersService = cloneref(game:GetService('Players'))
-local replicatedStorage = cloneref(game:GetService('ReplicatedStorage'))
-local collectionService = cloneref(game:GetService('CollectionService'))
-local lplr = playersService.LocalPlayer
-
-local helpers = {
-	Range = {
-		Shop = 20,
-		Chest = 20,
-	},
-	PollInterval = 0.1,
-	WoolFamily = 'wool',
-}
-
-local function game_state()
-	local value = getgenv().store
-	return type(value) == 'table' and value or nil
-end
-
-local function game_api()
-	local value = getgenv().bedwars
-	return type(value) == 'table' and value or nil
-end
-
-local function entities()
-	local vape = shared.vape
-	return vape and vape.Libraries and vape.Libraries.entity or nil
-end
-function helpers.Studs(val)
-	return val <= 1 and 'stud' or 'studs'
-end
-function helpers.Seconds(val)
-	return val <= 1 and 'sec' or 'secs'
-end
-function helpers.Minutes(val)
-	return val <= 1 and 'min' or 'mins'
-end
-
-helpers.Percent = '%'
-
-local Utils = {}
-helpers.Utils = Utils
-
-function Utils.Notify(label, text, duration, kind)
-	local vape = shared.vape
-	if vape and type(vape.CreateNotification) == 'function' then
-		pcall(vape.CreateNotification, vape, label, text, duration, kind)
-	end
-end
-
-function Utils.Alive()
-	local entitylib = entities()
-	return entitylib ~= nil and entitylib.isAlive == true
-end
-
-function Utils.Root()
-	local entitylib = entities()
-	local character = entitylib and entitylib.character
-	return character and character.RootPart or nil
-end
-
-function Utils.Position()
-	local root = Utils.Root()
-	return root and root.Position or nil
-end
-
-function Utils.Distance(position)
-	local origin = Utils.Position()
-	if not origin or not position then return nil end
-	return (position - origin).Magnitude
-end
-
-function Utils.InRange(position, range)
-	local distance = Utils.Distance(position)
-	return distance ~= nil and distance <= range
-end
-function Utils.Restart(module)
-	if module and module.Enabled then
-		module:Toggle()
-		module:Toggle()
-	end
-end
-function Utils.Combat()
-	return shared.AetherCombat or getgenv().AetherCombat
-end
-
-function Utils.InCombat()
-	local combat = Utils.Combat()
-	return (combat and combat:IsInCombat()) == true
-end
-
-local Queue = {Test = 'bedwars_test'}
-helpers.Queue = Queue
-
-function Queue.Name()
-	local store = game_state()
-	return store and store.queueType or Queue.Test
-end
-
-function Queue.Ready()
-	return Queue.Name() ~= Queue.Test
-end
-function Queue.Await(module)
-	local shouldStop = module
-	if type(module) == 'table' then
-		shouldStop = function()
-			return module.Enabled ~= true
-		end
-	end
-	repeat
-		task.wait()
-	until Queue.Ready() or (shouldStop and shouldStop())
-	return Queue.Ready()
-end
-
-local Inventory = {}
-helpers.Inventory = Inventory
-
-function Inventory.Container()
-	local store = game_state()
-	local inventory = store and store.inventory and store.inventory.inventory
-	return type(inventory) == 'table' and inventory or nil
-end
-
-function Inventory.Items()
-	local inventory = Inventory.Container()
-	return (inventory and inventory.items) or {}
-end
-function Inventory.Item(name, find)
-	for slot, item in Inventory.Items() do
-		local itemType = item and item.itemType
-		if itemType and ((find and itemType:find(name, 1, true)) or itemType == name) then
-			return item, slot
-		end
-	end
-	return nil
-end
-
-function Inventory.Amount(name, find)
-	local item = Inventory.Item(name, find)
-	return item and tonumber(item.amount) or 0
-end
-function Inventory.Total(predicate)
-	local total = 0
-	for _, item in Inventory.Items() do
-		if item and item.itemType and (not predicate or predicate(item.itemType, item)) then
-			total += tonumber(item.amount) or 1
-		end
-	end
-	return total
-end
-
-function Inventory.Meta(itemType)
-	local bedwars = game_api()
-	local meta = bedwars and bedwars.ItemMeta and bedwars.ItemMeta[itemType]
-	return type(meta) == 'table' and meta or nil
-end
-function Inventory.StackCap(itemType)
-	local meta = Inventory.Meta(itemType)
-	local capacity = meta and meta.maxStackSize
-	if type(capacity) == 'table' then
-		capacity = tonumber(capacity.amount)
-	end
-	return capacity and capacity > 0 and capacity or nil
-end
-
-local Families = {}
-helpers.Families = Families
-
-function Families.Name(entry)
-	entry = tostring(entry or ''):lower():gsub('%s+', '')
-	if entry == '' then return nil end
-	if entry:find(helpers.WoolFamily, 1, true) then return helpers.WoolFamily end
-	return entry
-end
-
-function Families.Matches(itemType, family)
-	itemType = tostring(itemType or ''):lower()
-	if family == helpers.WoolFamily then
-		return itemType:find(helpers.WoolFamily, 1, true) ~= nil
-	end
-	return itemType == family
-end
-
-function Families.Label(family)
-	return family:sub(1, 1):upper()..family:sub(2)
-end
-function Families.ShopType(family)
-	return family == helpers.WoolFamily and 'wool_white' or family
-end
-local Shop
-local Refill = {}
-helpers.Refill = Refill
-
-local RESERVATION_TIMEOUT = 3
-local reserved = {}
-
-function Refill.Count(family)
-	return Inventory.Total(function(itemType)
-		return Families.Matches(itemType, family)
-	end)
-end
-
-function Refill.Reserve(family, units)
-	local record = reserved[family]
-	if record then
-		record.Units += units
-		return
-	end
-	reserved[family] = {Baseline = Refill.Count(family), Units = units, Clock = os.clock()}
-end
-function Refill.Held(family)
-	local observed = Refill.Count(family)
-	local record = reserved[family]
-	if not record then return observed end
-
-	if observed >= record.Baseline + record.Units or os.clock() - record.Clock > RESERVATION_TIMEOUT then
-		reserved[family] = nil
-		return observed
-	end
-	return math.max(observed, record.Baseline + record.Units)
-end
-
-function Refill.Clear()
-	table.clear(reserved)
-end
-
-function Refill.TopUp(family, target, shopId, currencytable, label)
-	local item = Shop.Item(Families.ShopType(family))
-	if not item or not shopId then return false end
-
-	local amount = math.max(tonumber(item.amount) or 1, 1)
-	local price = math.max(tonumber(item.price) or 0, 0)
-	local current = Refill.Held(family)
-	local needed = math.max(tonumber(target) or 0, 0) - current
-	if needed <= 0 then return false end
-
-	local purchases = math.ceil(needed / amount)
-	local capacity = Inventory.StackCap(Families.ShopType(family))
-	if capacity then
-		purchases = math.min(purchases, math.max(math.ceil((capacity - current) / amount), 0))
-	end
-	if price > 0 then
-		local wallet = currencytable[item.currency]
-		if not wallet then
-			wallet = Inventory.Amount(item.currency)
-			currencytable[item.currency] = wallet
-		end
-		purchases = math.min(purchases, math.floor(wallet / price))
-	end
-	if purchases <= 0 or not Shop.CanBuy(item, currencytable, purchases) then return false end
-
-	for _ = 1, purchases do
-		Shop.Purchase(item, shopId, currencytable, {Label = label})
-	end
-	Refill.Reserve(family, purchases * amount)
-	return true
-end
-
-local CLAIM_WINDOW = 1.5
-
-local function priorityFile()
-	return 'aetherv2/refill-priority.txt'
-end
-
-function Refill.Priority()
-	if helpers.refillPriority then return helpers.refillPriority end
-	local ok, contents = pcall(readfile, priorityFile())
-	if ok and type(contents) == 'string' then
-		local value = contents:gsub('%s+', '')
-		if value == 'AutoBuy' or value == 'AutoRefill' then
-			helpers.refillPriority = value
-			return value
-		end
-	end
-	return nil
-end
-
-function Refill.SetPriority(module)
-	helpers.refillPriority = module
-	pcall(writefile, priorityFile(), tostring(module or ''))
-end
-
-function Refill.Claim(module)
-	helpers.refillClaim = {Module = module, Clock = os.clock()}
-end
-function Refill.BlockedBy(module)
-	local claim = helpers.refillClaim
-	if not claim or os.clock() - claim.Clock > CLAIM_WINDOW then return nil end
-	if claim.Module == module then return nil end
-	if Refill.Priority() ~= claim.Module then return nil end
-	return claim.Module
-end
-
-local conflictShown = false
-
-function Refill.ResolveConflict(trigger)
-	local getter = getgenv and getgenv().getAetherModule
-	if type(getter) ~= 'function' then return end
-	local autoBuy = getter('AutoBuy')
-	local autoRefill = getter('AutoRefill')
-	if not (autoBuy and autoRefill and autoBuy.Enabled and autoRefill.Enabled) then
-		conflictShown = false
-		return
-	end
-	if conflictShown then return end
-	conflictShown = true
-
-	local current = Refill.Priority()
-	if current then return end
-	Utils.Notify(trigger or 'Aether', 'AutoBuy and AutoRefill are both on. Only the prioritised one buys; pick which in the window.', 10, 'warning')
-
-	local vape = shared.vape
-	if not (vape and type(vape.CreateChoice) == 'function') then return end
-	pcall(vape.CreateChoice, vape, {
-		Title = 'AutoBuy and AutoRefill',
-		Message = 'Both AutoBuy and AutoRefill have been activated. Which module would you like to prioritise? The other will only act when the prioritised one has nothing to do.',
-		Options = {
-			{Label = 'AutoRefill', Primary = current ~= 'AutoBuy', Function = function() Refill.SetPriority('AutoRefill') end},
-			{Label = 'AutoBuy', Primary = current == 'AutoBuy', Function = function() Refill.SetPriority('AutoBuy') end},
-		}
-	})
-end
-
-local Health = {}
-helpers.Health = Health
-
-local function characterOf(character)
-	return character or lplr.Character
-end
-function Health.Current(character)
-	character = characterOf(character)
-	if not character then return nil end
-	local health = character:GetAttribute('Health')
-	local humanoid = character:FindFirstChildOfClass('Humanoid')
-	if type(health) ~= 'number' then health = humanoid and humanoid.Health end
-	return type(health) == 'number' and health or nil
-end
-
-function Health.Maximum(character)
-	character = characterOf(character)
-	if not character then return nil end
-	local maximum = character:GetAttribute('MaxHealth')
-	local humanoid = character:FindFirstChildOfClass('Humanoid')
-	if type(maximum) ~= 'number' or maximum <= 0 then maximum = humanoid and humanoid.MaxHealth end
-	return type(maximum) == 'number' and maximum > 0 and maximum or nil
-end
-
-function Health.Percent(character)
-	local health, maximum = Health.Current(character), Health.Maximum(character)
-	if not health or not maximum then return nil end
-	return math.clamp((health / maximum) * 100, 0, 100)
-end
-
-Shop = {}
-helpers.Shop = Shop
-
-Shop.Range = helpers.Range.Shop
-Shop.ItemApp = 'BedwarsItemShopApp'
-Shop.UpgradeApp = 'TeamUpgradeApp'
-Shop.ChestApp = 'ChestApp'
-
-function Shop.Entries()
-	local store = game_state()
-	local entries = store and store.shop
-	return type(entries) == 'table' and entries or {}
-end
-
-local function matchesKind(entry, kind)
-	if kind == nil then return entry.Shop == true or entry.Upgrades == true end
-	if kind == 'item' then return entry.Shop == true end
-	if kind == 'upgrade' then return entry.Upgrades == true end
-	return true
-end
-function Shop.Nearby(kind, range)
-	local origin = Utils.Position()
-	if not origin then return nil end
-	range = range or Shop.Range
-	local closest, closestDistance
-	for _, entry in Shop.Entries() do
-		local part = entry.RootPart
-		if part and part.Parent and matchesKind(entry, kind) then
-			local distance = (part.Position - origin).Magnitude
-			if distance <= range and (not closestDistance or distance < closestDistance) then
-				closest, closestDistance = entry, distance
-			end
-		end
-	end
-	return closest
-end
-function Shop.Id(kind, range)
-	local entry = Shop.Nearby(kind, range)
-	return entry and entry.Id or nil
-end
-
-function Shop.ScreenOpen(appId)
-	local bedwars = game_api()
-	local app = bedwars and bedwars.AppController
-	if not app or type(app.isAppOpen) ~= 'function' then return false end
-	local ok, opened = pcall(app.isAppOpen, app, appId)
-	return ok and opened == true
-end
-
-function Shop.ItemScreenOpen()
-	return Shop.ScreenOpen(Shop.ItemApp)
-end
-
-function Shop.UpgradeScreenOpen()
-	return Shop.ScreenOpen(Shop.UpgradeApp)
-end
-function Shop.BuyScreenOpen()
-	return Shop.ItemScreenOpen() or Shop.UpgradeScreenOpen()
-end
-
-function Shop.ChestScreenOpen()
-	return Shop.ScreenOpen(Shop.ChestApp)
-end
-local itemCache, itemCacheInventory, itemCacheAt = {}, nil, 0
-local function itemCacheValid()
-	local store = game_state()
-	local inventory = store and store.inventory
-	local now = os.clock()
-	if inventory ~= itemCacheInventory or now - itemCacheAt > 2 then
-		table.clear(itemCache)
-		itemCacheInventory, itemCacheAt = inventory, now
-	end
-end
-
-function Shop.ClearCache()
-	table.clear(itemCache)
-end
-
-local fetchItem
-function Shop.Item(itemType, shopId)
-	itemCacheValid()
-	local key = shopId and itemType..'|'..tostring(shopId) or itemType
-	local cached = itemCache[key]
-	if cached ~= nil then
-		return cached or nil
-	end
-	local item = fetchItem(itemType, shopId)
-	itemCache[key] = item or false
-	return item
-end
-
-fetchItem = function(itemType, shopId)
-	local runtime = shared.AetherBedWarsRuntime
-	local capability = runtime and runtime.BedWarsAPI and runtime.BedWarsAPI.Shop
-	if capability and type(capability.GetItem) == 'function' then
-		local item = capability:GetItem(itemType, shopId)
-		if item then return item end
-	end
-	local bedwars = game_api()
-	if bedwars and bedwars.Shop and type(bedwars.Shop.getShopItem) == 'function' then
-		local ok, item = pcall(bedwars.Shop.getShopItem, itemType, lplr, shopId and {shopId = shopId} or nil)
-		if ok then return item end
-	end
-	return nil
-end
-
-function Shop.Owned(itemType)
-	local bedwars = game_api()
-	local shopController = bedwars and bedwars.BedwarsShopController
-	local purchased = shopController and shopController.alreadyPurchasedMap
-	return purchased ~= nil and purchased[itemType] ~= nil
-end
-function Shop.TeamUpgrades()
-	local bedwars = game_api()
-	local ok, state = pcall(function()
-		return bedwars.Store:getState()
-	end)
-	local bedwarsState = ok and type(state) == 'table' and state.Bedwars or nil
-	local upgrades = type(bedwarsState) == 'table' and bedwarsState.teamUpgrades or nil
-	if type(upgrades) ~= 'table' then return {} end
-	local team = upgrades[lplr:GetAttribute('Team')]
-	return type(team) == 'table' and team or upgrades
-end
-function Shop.CanBuy(item, currencytable, amount)
-	amount = amount or 1
-	currencytable = currencytable or {}
-	if not currencytable[item.currency] then
-		currencytable[item.currency] = Inventory.Amount(item.currency)
-	end
-	local store = game_state()
-	if item.ignoredByKit and table.find(item.ignoredByKit, store and store.equippedKit or '') then return false end
-	if item.lockedByForge or item.disabled then return false end
-	if item.disabledInQueue and store and table.find(item.disabledInQueue, store.queueType or '') then return false end
-	if item.require and item.require.teamUpgrade then
-		local required = item.require.teamUpgrade
-		if (Shop.TeamUpgrades()[required.upgradeId] or -1) < required.lowestTierIndex then return false end
-	end
-	return currencytable[item.currency] >= (item.price * amount)
-end
-local pendingPurchases = {}
-local boughtNotices = {}
-local function reportPurchase(label, name)
-	local key = label..'/'..name
-	local notice = boughtNotices[key]
-	if notice then
-		notice.Count += 1
-		return
-	end
-	notice = {Count = 1}
-	boughtNotices[key] = notice
-	task.delay(0.25, function()
-		boughtNotices[key] = nil
-		Utils.Notify(label, 'Bought '..name..(notice.Count > 1 and ' x'..notice.Count or ''), 3)
-	end)
-end
-function Shop.Pending(itemType)
-	local clock = pendingPurchases[itemType]
-	return clock ~= nil and os.clock() < clock
-end
-
-function Shop.Purchase(item, shopId, currencytable, options)
-	options = options or {}
-	local bedwars = game_api()
-	if not bedwars then return false end
-	local meta = bedwars.ItemMeta and bedwars.ItemMeta[item.itemType]
-	local name = meta and meta.displayName or item.itemType
-	pendingPurchases[item.itemType] = os.clock() + 2
-	table.clear(itemCache)
-
-	local fired = pcall(function()
-		bedwars.Handler:Get('BedwarsPurchaseItem'):Fire('CallServerAsync', {
-			shopItem = item,
-			shopId = shopId
-		}):andThen(function(suc)
-			pendingPurchases[item.itemType] = os.clock() + (suc and 0.5 or 1)
-			if not suc then return end
-			if options.Label then
-				reportPurchase(options.Label, name)
-			end
-			bedwars.SoundManager:playSound(bedwars.SoundList.BEDWARS_PURCHASE_ITEM)
-			bedwars.Store:dispatch({
-				type = 'BedwarsAddItemPurchased',
-				itemType = item.itemType
-			})
-			if not options.TieredOnly or item.tiered then
-				bedwars.BedwarsShopController.alreadyPurchasedMap[item.itemType] = true
-			end
-		end)
-	end)
-	if not fired then
-		pendingPurchases[item.itemType] = nil
-		return false
-	end
-
-	if currencytable then
-		currencytable[item.currency] = (currencytable[item.currency] or 0) - item.price
-	end
-	return true
-end
-function helpers.KitName()
-	local store = game_state()
-	local equipped = store and store.equippedKit
-	if type(equipped) == 'string' and equipped ~= '' then return equipped end
-	for _, attribute in {'PlayingAsKit', 'PlayingAsKits', 'SelectedKit', 'Kit'} do
-		local value = lplr:GetAttribute(attribute)
-		if value ~= nil then
-			local text = tostring(value)
-			if text ~= '' and text:lower() ~= 'none' then return text end
-		end
-	end
-	return nil
-end
-
-function helpers.IsKit(...)
-	local current = helpers.KitName()
-	if not current then return false end
-	current = current:lower()
-	for index = 1, select('#', ...) do
-		local wanted = select(index, ...)
-		if wanted ~= nil and current == tostring(wanted):lower() then return true end
-	end
-	return false
-end
-
-local Ability = {}
-helpers.Ability = Ability
-
-function Ability.Controller()
-	local bedwars = game_api()
-	return bedwars and bedwars.AbilityController or nil
-end
-function Ability.Ready(id)
-	local controller = Ability.Controller()
-	if not controller or type(controller.canUseAbility) ~= 'function' then return false end
-	local ok, ready = pcall(controller.canUseAbility, controller, id, {disableBlockedAbilityAlert = true})
-	return ok and ready == true
-end
-
-function Ability.Use(id, ...)
-	local controller = Ability.Controller()
-	if not controller or type(controller.useAbility) ~= 'function' then return false end
-	local ok, result = pcall(controller.useAbility, controller, id, ...)
-	return ok and result ~= false
-end
-
-local Hook = {}
-helpers.Hook = Hook
-function Hook.Controller(module, controllerName, methodName, wrapper)
-	local state = {controller = nil, original = nil, hooked = nil}
-
-	local function uninstall()
-		local controller = state.controller
-		if controller and state.hooked and controller[methodName] == state.hooked then
-			controller[methodName] = state.original
-		end
-		state.controller, state.original, state.hooked = nil, nil, nil
-	end
-
-	local function install()
-		if state.hooked then
-			if state.controller and state.controller[methodName] == state.hooked then return end
-			uninstall()
-		end
-		local bedwars = game_api()
-		local controller = bedwars and bedwars[controllerName]
-		if type(controller) ~= 'table' or type(controller[methodName]) ~= 'function' then return end
-		local original = controller[methodName]
-		state.controller, state.original = controller, original
-		state.hooked = function(...)
-			return wrapper(original, ...)
-		end
-		controller[methodName] = state.hooked
-	end
-
-	install()
-	local thread = task.spawn(function()
-		while module.Enabled do
-			install()
-			task.wait(1)
-		end
-	end)
-	module:Clean(function()
-		pcall(task.cancel, thread)
-		uninstall()
-	end)
-	return state
-end
-function helpers.FindVector(...)
-	for index = 1, select('#', ...) do
-		local value = select(index, ...)
-		if typeof(value) == 'Vector3' then return value end
-	end
-	return nil
-end
-
-local Chest = {}
-helpers.Chest = Chest
-
-Chest.Tag = 'personal-chest'
-Chest.Range = helpers.Range.Chest
-
-function Chest.Remotes()
-	local bedwars = game_api()
-	local client = bedwars and bedwars.Client
-	if not client or type(client.GetNamespace) ~= 'function' then return nil end
-	local ok, remotes = pcall(function()
-		return client:GetNamespace('Inventory')
-	end)
-	return ok and remotes or nil
-end
-
-function Chest.OwnFolder(plr)
-	plr = plr or lplr
-	local inventories = replicatedStorage:FindFirstChild('Inventories')
-	return inventories and inventories:FindFirstChild(plr.Name..'_personal') or nil
-end
-function Chest.FolderOf(chest)
-	if not chest then return nil end
-	local value = chest:FindFirstChild('ChestFolderValue')
-	return value and value.Value or nil
-end
-
-function Chest.Part(object)
-	if not object then return nil end
-	if object:IsA('Model') then return object.PrimaryPart end
-	return object:IsA('BasePart') and object or nil
-end
-
-function Chest.Tagged()
-	return collectionService:GetTagged(Chest.Tag)
-end
-
-function Chest.IsPersonal(chest)
-	if not chest then return false end
-	if collectionService:HasTag(chest, Chest.Tag) then return true end
-	if tostring(chest.Name):lower():find('personal', 1, true) then return true end
-	if chest:GetAttribute('PersonalChest') or chest:GetAttribute('IsPersonalChest') then return true end
-	local folder = Chest.FolderOf(chest)
-	if not folder then return false end
-	local name = tostring(folder.Name):lower()
-	return name:sub(-#'_personal') == '_personal' or name == 'personal'
-end
-function Chest.InRange(range, origin)
-	origin = origin or Utils.Position()
-	if not origin then return false end
-	for _, chest in Chest.Tagged() do
-		local part = Chest.Part(chest)
-		if part and part.Parent and (part.Position - origin).Magnitude <= (range or Chest.Range) then
-			return true
-		end
-	end
-	return false
-end
-function Chest.Entries(folder)
-	local entries = {}
-	if not folder then return entries end
-	for _, child in folder:GetChildren() do
-		if child:IsA('Accessory') then
-			table.insert(entries, child)
-		end
-	end
-	return entries
-end
-function Chest.Totals(folder)
-	local totals = {}
-	for _, entry in Chest.Entries(folder) do
-		totals[entry.Name] = (totals[entry.Name] or 0) + (entry:GetAttribute('Amount') or 1)
-	end
-	return totals
-end
-function Chest.Observe(folder, body)
-	local remotes = Chest.Remotes()
-	if not remotes then return false end
-	pcall(function()
-		remotes:Get('SetObservedChest'):SendToServer(folder)
-	end)
-	local results = table.pack(pcall(body, remotes))
-	pcall(function()
-		remotes:Get('SetObservedChest'):SendToServer(nil)
-	end)
-	return table.unpack(results, 1, results.n)
-end
-function Chest.Give(folder, tool)
-	local remotes = Chest.Remotes()
-	if not remotes or not tool then return false end
-	local ok, given = pcall(function()
-		return remotes:Get('ChestGiveItem'):CallServer(folder, tool)
-	end)
-	return ok and given == true
-end
-
-function Chest.Take(folder, entry)
-	local remotes = Chest.Remotes()
-	if not remotes or not entry then return false end
-	local ok, taken = pcall(function()
-		return remotes:Get('ChestGetItem'):CallServer(folder, entry)
-	end)
-	return ok and taken == true
-end
-
-return helpers
-]=]
-	local fn, err = loadstring(src, "bedwarsutil")
-	if fn then
-		local ok, lib = pcall(fn)
-		if ok and type(lib) == "table" then
-			vape.Libraries.bedwarsutil = lib
-			shared.AetherBedWarsUtil = lib
-			print("[elevate] bedwarsutil loaded from pack")
-			print("[elevate] Night/Aether Killaura build 2026-11-01-statusfix loaded")
-		else
-			warn("[elevate] bedwarsutil exec failed:", lib)
-		end
-	else
-		warn("[elevate] bedwarsutil compile failed:", err)
-	end
-end)
-
-
 local splashParams = RaycastParams.new()
 splashParams.FilterType = Enum.RaycastFilterType.Include
 local function splashAimPoint(root, hip)
@@ -1160,15 +188,6 @@ local TrapDisabler
 local TrapSnap, TrapMine, TrapTeleport, TrapPortal = {}, {}, {}, {}
 local AntiFallPart
 local bedwars, remotes, sides, oldinvrender, oldSwing = {}, {}, {}, {}, {}
-
-local function __elevateSafeHandlerGet(name)
-	local h = bedwars and bedwars.Handler
-	if type(h) == "table" and type(h.Get) == "function" then
-		local ok, r = pcall(function() return h:Get(name) end)
-		if ok then return r end
-	end
-	return nil
-end
 
 local function getReach(tool)
 	local itemMeta = tool and bedwars.ItemMeta and bedwars.ItemMeta[tool.Name]
@@ -2322,96 +1341,12 @@ run(function()
 		ZapNetworking = require(lplr.PlayerScripts.TS.lib.network),
 	}, {
 		__index = function(self, ind)
-			if ind == "StatusEffectUtil" then
-				local stub = {
-					isActive = function(_, character, effect)
-						if not character then return false end
-						local ok, res = pcall(function()
-							if effect == "frozen" then
-								local untilt = character:GetAttribute("StunnedUntilTime")
-								if untilt and untilt > workspace:GetServerTimeNow() then return true end
-							end
-							if effect == "fury_potion" then
-								if character:GetAttribute("Fury") or character:GetAttribute("fury_potion") then return true end
-							end
-							local key = tostring(effect or "")
-							return not not (character:GetAttribute(key) or character:GetAttribute("StatusEffect_" .. key))
-						end)
-						return ok and res or false
-					end
-				}
-				stub.IsActive = stub.isActive
-				rawset(self, ind, stub)
-				return stub
-			end
-			local ctrl = Knit.Controllers[ind]
-			if ctrl ~= nil then
-				rawset(self, ind, ctrl)
-			end
+			rawset(self, ind, Knit.Controllers[ind])
 			return rawget(self, ind)
 		end
 	})
 
 	getgenv().bedwars = bedwars
-
-	-- Force StatusEffectUtil so Aether Killaura never nil:isActive
-	print("[elevate] Night/Aether Killaura build 2026-11-01-statusfix loaded")
-	do
-		local function makeStatusEffectUtil()
-			local util = nil
-			local loaders = {
-				function()
-					return require(game:GetService("ReplicatedStorage").TS.entity["status-effect"]["status-effect-util"]).StatusEffectUtil
-				end,
-				function()
-					return require(game:GetService("ReplicatedStorage").TS["status-effect"]["status-effect-util"]).StatusEffectUtil
-				end,
-				function()
-					return require(game:GetService("ReplicatedStorage").TS.entity["status-effect-util"]).StatusEffectUtil
-				end,
-			}
-			for _, loader in ipairs(loaders) do
-				local ok, mod = pcall(loader)
-				if ok and type(mod) == "table" and (type(mod.isActive) == "function" or type(mod.IsActive) == "function") then
-					util = mod
-					break
-				end
-			end
-			if not util then
-				util = {}
-				function util.isActive(_, character, effect)
-					if not character then return false end
-					local ok, res = pcall(function()
-						if effect == "frozen" then
-							local untilt = character:GetAttribute("StunnedUntilTime")
-							if untilt and untilt > workspace:GetServerTimeNow() then return true end
-							if character:FindFirstChild("elk") then return true end
-						end
-						if effect == "fury_potion" then
-							if character:GetAttribute("Fury") or character:GetAttribute("fury_potion") then return true end
-						end
-						local key = tostring(effect or "")
-						return character:GetAttribute(key) or character:GetAttribute("StatusEffect_" .. key) and true or false
-					end)
-					return ok and res and true or false
-				end
-				util.IsActive = util.isActive
-			end
-			return util
-		end
-		local se = makeStatusEffectUtil()
-		rawset(bedwars, "StatusEffectUtil", se)
-		getgenv().__elevateStatusActive = function(character, effect)
-			local u = bedwars.StatusEffectUtil
-			if not u then return false end
-			local fn = u.isActive or u.IsActive
-			if type(fn) ~= "function" then return false end
-			local ok, res = pcall(fn, u, character, effect)
-			return ok and res and true or false
-		end
-		-- also global for run() chunks
-		__elevateStatusActive = getgenv().__elevateStatusActive
-	end
 
 	prediction.Raycast = function(origin, direction, params)
 		return bedwars.QueryUtil:raycast(origin, direction, params)
@@ -8498,7 +7433,185 @@ end)
 
 local Attacking
 
+
 run(function()
+	-- Elevate compat: this base has no bedwars.Handler, swordtiming, StatusEffectUtil, etc.
+	local bedwars = setmetatable({}, {__index = bedwars})
+	local function getNet(Name)
+		local Ok, Object = pcall(function()
+			return bedwars.Client:Get(Name)
+		end)
+		return Ok and Object or nil
+	end
+	local AttackObject
+	bedwars.Handler = {
+		Get = function(_, Name)
+			if Name == "SwordHit" then
+				return {
+					GetRateLimit = function()
+						return 210
+					end,
+					Fire = function(_, _, Payload)
+						AttackObject = AttackObject or getNet(remotes.AttackEntity)
+						if not AttackObject then
+							return
+						end
+						local Remote = AttackObject.instance
+						if Remote then
+							Remote:FireServer(Payload)
+							return
+						end
+						store.kaSending = true
+						pcall(AttackObject.SendToServer, AttackObject, Payload)
+						store.kaSending = false
+					end
+				}
+			elseif Name == "ProjectileFire" then
+				return {
+					Fire = function(_, _, ...)
+						local Object = getNet("ProjectileFire")
+						if not Object then
+							return
+						end
+						local Ok, Response = pcall(Object.CallServer, Object, ...)
+						return Ok and Response or nil
+					end
+				}
+			elseif Name == "SwordSwingMiss" then
+				return {
+					Fire = function(_, _, Payload)
+						local Object = getNet("SwordSwingMiss")
+						if Object and Object.SendToServer then
+							pcall(Object.SendToServer, Object, Payload)
+						end
+					end
+				}
+			end
+			return {
+				Fire = function() end,
+				GetRateLimit = function()
+					return 300
+				end
+			}
+		end
+	}
+	bedwars.getTinkerMount = function()
+		return nil
+	end
+	bedwars.watchProjectile = function() end
+	bedwars.getShotData = function()
+		return {drawDurationSeconds = 1}
+	end
+	bedwars.swingEffect = function(SwordMeta)
+		local Controller = bedwars.SwordController
+		local Meta = getmetatable(Controller)
+		local Base = Meta and type(Meta.__index) == "table" and Meta.__index.playSwordEffect or Controller.playSwordEffect
+		pcall(Base, Controller, SwordMeta, false)
+	end
+	bedwars.StatusEffectUtil = {
+		isActive = function(_, Character, Effect)
+			if not Character then
+				return false
+			end
+			local Value = Character:GetAttribute("StatusEffect_" .. Effect)
+			return Value ~= nil and Value ~= false
+		end
+	}
+	bedwars.ScytheController = bedwars.ScytheController or {playLocalAnimation = function() end}
+
+	local isAfk = isAfk or function()
+		return false
+	end
+	local getProjectiles = getProjectiles or function()
+		return {}
+	end
+	local sortlist = sortlist
+	if type(sortlist) ~= "table" then
+		sortlist = {}
+		for Name in sortmethods do
+			table.insert(sortlist, Name)
+		end
+		table.sort(sortlist)
+	end
+
+	-- Used only when the real swordtiming library is missing (same constants as SilentAura).
+	local SwordTimingFallback = {
+		SafeSpacing = 0.255,
+		HighSpacing = 0.225,
+		HitFloor = 0.292,
+		GapFloor = 0.2965,
+		ArrivalFloor = 0.274,
+		CooldownCorrection = (0.017999999225139618 / 10) + 0.013412
+	}
+	local WeaponSpacing = {[0.15] = 0.22, [0.25] = 0.24, [0.35] = 0.345, [0.4] = 0.341, [0.6] = 0.63}
+	function SwordTimingFallback.Calculate(SwordSpeed, Fury, High, Budget)
+		local Stock = SwordSpeed == 0.3
+		local Normal = High and SwordTimingFallback.HighSpacing or SwordTimingFallback.SafeSpacing
+		local Spacing = Stock and Normal or WeaponSpacing[SwordSpeed] or SwordSpeed + 0.03
+		Spacing = math.max(Spacing * Fury, Budget or 0)
+		local Scale = Spacing / (Stock and Normal or SwordTimingFallback.SafeSpacing)
+		local Gap = (Scale < 1 and SwordTimingFallback.GapFloor or SwordTimingFallback.HitFloor) * Scale
+		if Stock and High then
+			Gap = math.max(Gap, SwordTimingFallback.GapFloor, Budget or 0)
+		end
+		return Spacing, Scale, Gap, math.max(SwordSpeed * Fury - SwordTimingFallback.CooldownCorrection, 0), Stock
+	end
+	-- Libraries the killaura reads from vape.Libraries.
+	vape.Libraries.swordtiming = vape.Libraries.swordtiming or SwordTimingFallback
+	vape.Libraries.auraanims = vape.Libraries.auraanims or {
+		Normal = {
+			{CFrame = CFrame.Angles(math.rad(-30), 0, 0), Time = 0.1},
+			{CFrame = CFrame.new(), Time = 0.1}
+		}
+	}
+	store.ping = store.ping or {total = 0}
+
+	-- Adds the UI methods this UI lacks and holds toggles until every option exists.
+	local killauraReady = false
+	local blatant = vape.Categories.Blatant
+	local rawCreateModule = blatant.CreateModule
+	blatant.CreateModule = function(self, options)
+		blatant.CreateModule = rawCreateModule
+		local module
+		local original = options.Function
+		if original then
+			options.Function = function(state, ...)
+				local waited = 0
+				while state and not killauraReady and waited < 15 do
+					waited += task.wait()
+				end
+				if state and (not killauraReady or not module.Enabled) then
+					return
+				end
+				return original(state, ...)
+			end
+		end
+		module = rawCreateModule(self, options)
+		if not module.CreateGroup then
+			module.CreateGroup = function(parent, groupOptions)
+				local toggle = parent:CreateToggle({Name = groupOptions.Name, Default = groupOptions.Default, Function = groupOptions.Function, Tooltip = groupOptions.Tooltip})
+				return setmetatable({}, {
+					__index = function(_, key)
+						if type(key) == "string" and key:sub(1, 6) == "Create" then
+							return function(_, childOptions) return parent[key](parent, childOptions) end
+						end
+						return toggle[key]
+					end
+				})
+			end
+		end
+		if not module.CreateMultiDropdown then
+			module.CreateMultiDropdown = function(parent, dropdownOptions)
+				local toggles = {}
+				for _, name in dropdownOptions.List do
+					toggles[name] = parent:CreateToggle({Name = name, Darker = true})
+				end
+				return {Has = function(_, name) return toggles[name] ~= nil and toggles[name].Enabled end}
+			end
+		end
+		return module
+	end
+
 	local LocalPlayer = lplr
 	local Entity = entitylib
 	local Camera = gameCamera
@@ -8510,7 +7623,6 @@ run(function()
 	local getTinkerMount = bedwars.getTinkerMount
 	local watchProjectile = bedwars.watchProjectile
 	local SwordTiming = vape.Libraries.swordtiming
-	if type(SwordTiming) ~= 'table' then error('swordtiming missing') end
 	local Killaura
 	local Targets
 	local Sort
@@ -8590,19 +7702,13 @@ run(function()
 		return math.max(2, LocalPlayer:GetNetworkPing() * 2 + 0.3, (ConfirmMin or 0) + HitregTiming.Spread + 0.5)
 	end
 	
-	local Animations, AnimDelay, AnimTween, ArmC0 = (vape.Libraries and vape.Libraries.auraanims) or {}, tick()
+	local Animations, AnimDelay, AnimTween, ArmC0 = vape.Libraries.auraanims, tick()
 	local ArmWrist: Motor6D?
 	local ArcCheck: RaycastParams = RaycastParams.new()
 	ArcCheck.FilterType = Enum.RaycastFilterType.Exclude
 	local AttackRemote = {FireServer = function() end}
 	local SwordSwingMiss = {FireServer = function() end}
-	local ProjectileRemote = {Fire = function() end, FireServer = function() end, CallServer = function() end}
-	pcall(function()
-		if bedwars and type(bedwars.Handler) == "table" and type(bedwars.Handler.Get) == "function" then
-			local r = bedwars.Handler:Get("ProjectileFire")
-			if r then ProjectileRemote = r end
-		end
-	end)
+	local ProjectileRemote = bedwars.Handler:Get("ProjectileFire")
 	local FastHitPending, LastShot = nil, 0
 	local ArrivalFloor: number = SwordTiming.ArrivalFloor
 	local HitBudget, HitFloor, GapFloor = 0.2, SwordTiming.HitFloor, SwordTiming.GapFloor
@@ -8622,19 +7728,10 @@ run(function()
 	local SelfReference = {Low = Vector3.zero, High = Vector3.zero, Claim = Vector3.zero}
 	local BurstShots, BurstWait = 0, 0
 	local FuryScale: number = 1 - ((bedwars.BlackMarketeerBalance and bedwars.BlackMarketeerBalance.FURY_POTION_ATTACK_SPEED_MULTIPLIER or 0.5) - 1)
-	local SwordEffect = nil
-	pcall(function()
-		local sc = bedwars and bedwars.SwordController
-		if sc then
-			local mt = getmetatable(sc)
-			if mt and type(mt.__index) == "table" then
-				SwordEffect = mt.__index.playSwordEffect
-			end
-			if not SwordEffect and type(sc.playSwordEffect) == "function" then
-				SwordEffect = sc.playSwordEffect
-			end
-		end
-	end)
+	local SwordEffect = (function()
+		local Meta = getmetatable(bedwars.SwordController)
+		return Meta and type(Meta.__index) == "table" and Meta.__index.playSwordEffect or bedwars.SwordController.playSwordEffect
+	end)()
 	local ScanInterval: number = 1 / 75
 	local FlatScale: Vector3 = Vector3.new(1, 0, 1)
 	local ParkedPosition: Vector3 = Vector3.new(9e9, 9e9, 9e9)
@@ -8659,7 +7756,7 @@ run(function()
 		if Parent and RootPart then
 			local RootParent: Instance? = RootPart.Parent
 			if (RootParent == Character or RootParent ~= nil and RootPart:IsDescendantOf(Character))
-				and Ent.Health > 0 and Ent.Targetable and Entity.isVulnerable(Ent) then
+				and Ent.Health > 0 and Ent.Targetable and (Entity.isVulnerable == nil or Entity.isVulnerable(Ent)) then
 				local Now: number = os.clock()
 				local Checked = CombatCache.Static[Character]
 				if not Checked then
@@ -8749,26 +7846,9 @@ run(function()
 	end
 	
 	task.spawn(function()
-		for _ = 1, 50 do
-			pcall(function()
-				if bedwars and type(bedwars.Handler) == "table" and type(bedwars.Handler.Get) == "function" then
-					local hit = bedwars.Handler:Get("SwordHit")
-					local miss = bedwars.Handler:Get("SwordSwingMiss")
-					if hit then AttackRemote = hit end
-					if miss then SwordSwingMiss = miss end
-				end
-			end)
-			if AttackRemote and type(AttackRemote.GetRateLimit) == "function" then
-				local ok, rate = pcall(function() return AttackRemote:GetRateLimit() end)
-				if ok and type(rate) == "number" and rate > 0 then
-					local raw = 60 / rate
-					HitBudget = math.clamp(raw, 0.17, 0.34)
-					print("[elevate] Aether Killaura HitBudget", HitBudget, "rate", rate)
-					break
-				end
-			end
-			task.wait(0.2)
-		end
+		AttackRemote = bedwars.Handler:Get("SwordHit")
+		SwordSwingMiss = bedwars.Handler:Get("SwordSwingMiss")
+		HitBudget = 60 / AttackRemote:GetRateLimit()
 	end)
 	
 	local FireRates: {[string]: number} = {}
@@ -8884,108 +7964,16 @@ run(function()
 		end
 	end
 	
-	
-	-- Safe StatusEffectUtil.isActive (Elevate bedwars table often lacks StatusEffectUtil)
-	do
-		local seUtil = nil
-		local function resolveStatusEffectUtil()
-			if seUtil ~= nil then return seUtil end
-			local paths = {
-				function()
-					return require(game:GetService("ReplicatedStorage").TS.entity["status-effect"]["status-effect-util"]).StatusEffectUtil
-				end,
-				function()
-					return require(game:GetService("ReplicatedStorage").TS["status-effect"]["status-effect-util"]).StatusEffectUtil
-				end,
-				function()
-					return require(game:GetService("ReplicatedStorage").TS.entity["status-effect-util"]).StatusEffectUtil
-				end,
-			}
-			for _, loader in ipairs(paths) do
-				local ok, mod = pcall(loader)
-				if ok and type(mod) == "table" then
-					seUtil = mod
-					return seUtil
-				end
-			end
-			seUtil = false
-			return nil
-		end
-		function __elevateStatusActive(character, effect)
-			if not character then return false end
-			local util = resolveStatusEffectUtil()
-			if util then
-				local fn = util.isActive or util.IsActive
-				if type(fn) == "function" then
-					local ok, res = pcall(fn, util, character, effect)
-					if ok then return res and true or false end
-				end
-			end
-			-- attribute fallbacks
-			local ok2, res2 = pcall(function()
-				if effect == "frozen" then
-					local untilt = character:GetAttribute("StunnedUntilTime")
-					if untilt and untilt > workspace:GetServerTimeNow() then return true end
-					if character:FindFirstChild("elk") then return true end
-				end
-				if effect == "fury_potion" then
-					if character:GetAttribute("Fury") or character:GetAttribute("fury_potion") then return true end
-				end
-				local key = tostring(effect or "")
-				if character:GetAttribute(key) or character:GetAttribute("StatusEffect_" .. key) then return true end
-				return false
-			end)
-			return ok2 and res2 or false
-		end
-	end
-
-Killaura = vape.Categories.Blatant:CreateModule({
+	Killaura = vape.Categories.Blatant:CreateModule({
 		Name = "Killaura",
 		Function = function(Callback: boolean)
-			-- HARD guard: StatusEffectUtil must never be nil in this session
-			do
-				local function ensureSE()
-					if type(bedwars) ~= "table" then return end
-					local se = rawget(bedwars, "StatusEffectUtil")
-					if type(se) == "table" and type(se.isActive) == "function" then return end
-					local stub = {
-						isActive = function(_, character, effect)
-							if not character then return false end
-							local ok, res = pcall(function()
-								if effect == "frozen" then
-									local untilt = character:GetAttribute("StunnedUntilTime")
-									if untilt and untilt > workspace:GetServerTimeNow() then return true end
-								end
-								if effect == "fury_potion" then
-									if character:GetAttribute("Fury") or character:GetAttribute("fury_potion") then return true end
-								end
-								return false
-							end)
-							return ok and res or false
-						end
-					}
-					stub.IsActive = stub.isActive
-					rawset(bedwars, "StatusEffectUtil", stub)
-				end
-				ensureSE()
-				if type(getgenv) == "function" then
-					getgenv().__elevateStatusActive = function(character, effect)
-						ensureSE()
-						local se = bedwars and rawget(bedwars, "StatusEffectUtil")
-						if not se or type(se.isActive) ~= "function" then return false end
-						local ok, res = pcall(se.isActive, se, character, effect)
-						return ok and res and true or false
-					end
-				end
-			end
-			print("[elevate] killaura-enable statusfix-v3")
 			if Callback then
 				local oldAura = vape.Modules.KillauraOLD
 				if oldAura and oldAura.Enabled then
 					oldAura:Toggle()
 				end
 
-				local PreviousSwing = bedwars.SwordController and bedwars.SwordController.playSwordEffect
+				local PreviousSwing = bedwars.SwordController.playSwordEffect
 				local Current = {}
 				local Hook
 				Session = Current
@@ -8998,36 +7986,29 @@ Killaura = vape.Categories.Blatant:CreateModule({
 				HitregTiming.PeakUntil = 0
 				OldSwing = PreviousSwing
 				Hook = function(self, SwordMeta, Charged, Config)
-					local function callPrev()
-						if type(PreviousSwing) == "function" then
-							return PreviousSwing(self, SwordMeta, Charged, Config)
-						end
-					end
 					if not Killaura.Enabled or SwingHook ~= Hook then
-						return callPrev()
+						return PreviousSwing(self, SwordMeta, Charged, Config)
 					end
 					if Config and Config.playAnimation == false then
-						return callPrev()
+						return PreviousSwing(self, SwordMeta, Charged, Config)
 					end
 					if LegitAura.Enabled then
-						local Clicked = bedwars.SwordController and bedwars.SwordController.lastSwing
+						local Clicked: number = bedwars.SwordController.lastSwing
 						if (tick() - LastAttack) < 0.4 and Clicked == EffectSwing then
 							return
 						end
 						EffectSwing = Clicked
-						return callPrev()
+						return PreviousSwing(self, SwordMeta, Charged, Config)
 					end
 					if ((tick() - LastAttack) < 0.4 or (tick() - AnimDelay) < 0.4) and (tick() - LastEffect) < SwingGap then
 						return
 					end
 					LastEffect = tick()
 					SwingGap = math.max(SwingTime:GetRandomValue(), 0.11)
-					return callPrev()
+					return PreviousSwing(self, SwordMeta, Charged, Config)
 				end
 				SwingHook = Hook
-				if bedwars.SwordController then
-					bedwars.SwordController.playSwordEffect = SwingHook
-				end
+				bedwars.SwordController.playSwordEffect = SwingHook
 	
 				Killaura:Clean(vapeEvents.EntityDamageEvent.Event:Connect(function(DamageTable)
 					if DamageTable.fromEntity == LocalPlayer.Character and DamageTable.damageType == 0 and DamageTable.entityInstance then
@@ -9112,8 +8093,8 @@ Killaura = vape.Categories.Blatant:CreateModule({
 							}
 						}
 					}
-					debug.setupvalue(SwordEffect, 7, FakeKnit)
-					debug.setupvalue(bedwars.ScytheController.playLocalAnimation, 3, FakeKnit)
+					pcall(debug.setupvalue, SwordEffect, 7, FakeKnit)
+					pcall(debug.setupvalue, bedwars.ScytheController.playLocalAnimation, 3, FakeKnit)
 	
 					task.spawn(function()
 						local Started: boolean = false
@@ -9203,38 +8184,23 @@ Killaura = vape.Categories.Blatant:CreateModule({
 						if not Blocked and AFKCheck.Enabled and isAfk() then
 							Blocked = true
 						end
-						if not Blocked and GUI.Enabled then
-							local open = false
-							pcall(function()
-								if bedwars.AppController and bedwars.UILayers then
-									open = bedwars.AppController:isLayerOpen(bedwars.UILayers.MAIN)
-								end
-							end)
-							if open then
-								Blocked = true
-							end
+						if not Blocked and GUI.Enabled and bedwars.AppController:isLayerOpen(bedwars.UILayers.MAIN) then
+							Blocked = true
 						end
 						if not Blocked and Attackable.Enabled then
 							Blocked = not Entity.isAlive
 								or (LocalPlayer.Character:GetAttribute("StunnedUntilTime") or 0) > workspace:GetServerTimeNow()
 								or LocalPlayer.Character:FindFirstChild("elk") ~= nil
-								or (function()
-									local se = bedwars and rawget(bedwars, "StatusEffectUtil")
-									if type(se) == "table" and type(se.isActive) == "function" then
-										local ok, r = pcall(se.isActive, se, LocalPlayer.Character, "frozen")
-										return ok and r
-									end
-									return false
-								end)()
+								or bedwars.StatusEffectUtil:isActive(LocalPlayer.Character, "frozen")
 						end
 	
 						if not Blocked then
 							Sword = Limit.Enabled and store.hand or store.tools.sword
 							if not Sword or not Sword.tool then
 								Sword = nil
-							elseif Limit.Enabled and (store.hand.toolType ~= "sword" or (bedwars.DaoController and bedwars.DaoController.chargingMaid)) then
+							elseif Limit.Enabled and (store.hand.toolType ~= "sword" or bedwars.DaoController.chargingMaid) then
 								Sword = nil
-							elseif LegitAura.Enabled and bedwars.SwordController and (tick() - (bedwars.SwordController.lastSwing or 0)) > 0.2 then
+							elseif LegitAura.Enabled and (tick() - bedwars.SwordController.lastSwing) > 0.2 then
 								Sword = nil
 							else
 								SwordMeta = bedwars.ItemMeta[Sword.tool.Name]
@@ -9249,11 +8215,11 @@ Killaura = vape.Categories.Blatant:CreateModule({
 							if not Entity.isAlive or (os.clock() - ScanClock) >= ScanInterval then
 								ScanSettings.Origin = Root.Position
 								ScanSettings.Range = SwingRange.Value
-								ScanSettings.Wallcheck = (Targets.Walls and Targets.Walls.Enabled) or nil
+								ScanSettings.Wallcheck = Targets.Walls.Enabled or nil
 								ScanSettings.Part = "RootPart"
 								ScanSettings.Players = Targets.Players.Enabled
 								ScanSettings.NPCs = Targets.NPCs.Enabled
-								ScanSettings.Priority = Targets.Priority and Targets.Priority.Value or nil
+								ScanSettings.Priority = Targets.Priority.Value
 								ScanSettings.Sort = sortmethods[Sort.Value]
 								Entities = Entity.AllPosition(ScanSettings)
 								ScanClock = os.clock()
@@ -9266,14 +8232,7 @@ Killaura = vape.Categories.Blatant:CreateModule({
 								UpdateSelfReference(os.clock(), SendPosition)
 								local LocalFacing: Vector3 = Root.CFrame.LookVector * FlatScale
 								local DisplayName: string = SwordMeta and SwordMeta.displayName or ""
-								local FuryMultiplier: number = (function()
-									local se = bedwars and rawget(bedwars, "StatusEffectUtil")
-									if type(se) == "table" and type(se.isActive) == "function" then
-										local ok, r = pcall(se.isActive, se, LocalPlayer.Character, "fury_potion")
-										return ok and r
-									end
-									return false
-								end)() and FuryScale or 1
+								local FuryMultiplier: number = bedwars.StatusEffectUtil:isActive(LocalPlayer.Character, "fury_potion") and FuryScale or 1
 								local SwordSpeed: number = SwordMeta and SwordMeta.sword and SwordMeta.sword.attackSpeed or 0.3
 								local Spacing, SpeedScale, GapMin, AttackCooldown, Stock = SwordTiming.Calculate(SwordSpeed, FuryMultiplier, HighHitreg.Enabled, HitBudget)
 								local Quantized: boolean = Stock and HighHitreg.Enabled and Hitreg.Value ~= "Burst" and HitregTiming.AlignFrames and FrameTime > 1 / 30
@@ -9659,8 +8618,8 @@ Killaura = vape.Categories.Blatant:CreateModule({
 					v.Parent = nil
 					ParticleShown[v] = false
 				end
-				debug.setupvalue(SwordEffect, 7, bedwars.Knit)
-				debug.setupvalue(bedwars.ScytheController.playLocalAnimation, 3, bedwars.Knit)
+				pcall(debug.setupvalue, SwordEffect, 7, bedwars.Knit)
+				pcall(debug.setupvalue, bedwars.ScytheController.playLocalAnimation, 3, bedwars.Knit)
 				if bedwars.SwordController.playSwordEffect == SwingHook then
 					bedwars.SwordController.playSwordEffect = OldSwing
 				end
@@ -9773,12 +8732,18 @@ Killaura = vape.Categories.Blatant:CreateModule({
 			Data.Enabled = true
 		end
 	
-		LoadHighHitreg(self, Data)
+		if LoadHighHitreg then
+			LoadHighHitreg(self, Data)
+		end
 	end
 	
 	function HighHitreg:Save(Data)
-		SaveHighHitreg(self, Data)
-		Data[self.Name].Version = 1
+		if SaveHighHitreg then
+			SaveHighHitreg(self, Data)
+		end
+		if Data[self.Name] then
+			Data[self.Name].Version = 1
+		end
 	end
 	Hitreg = {Value = "Stable"}
 	MaxTargets = Killaura:CreateSlider({
@@ -10113,42 +9078,7 @@ Killaura = vape.Categories.Blatant:CreateModule({
 		Tooltip = "Only attacks while swinging manually"
 	})
 
-
 	Targets.Priority = Targets.Priority or {Value = nil}
-
-	-- Defaults if any option failed to create (prevents nil.Enabled crashes)
-	HighHitreg = HighHitreg or {Enabled = true}
-	Hitreg = Hitreg or {Value = "Stable"}
-	AttackSpeed = AttackSpeed or {Value = 0}
-	SwingRange = SwingRange or {Value = 28}
-	AttackRange = AttackRange or {Value = 18.1}
-	AngleSlider = AngleSlider or {Value = 360}
-	MaxTargets = MaxTargets or {Value = 5}
-	Sort = Sort or {Value = "Distance"}
-	SwingTime = SwingTime or {GetRandomValue = function() return 0.11 end, ValueMin = 0.11, ValueMax = 0.11}
-	ContinueSwing = ContinueSwing or {GetRandomValue = function() return 0 end}
-	AirHits = AirHits or {ValueMin = 100, ValueMax = 100}
-	FastHits = FastHits or {Enabled = false}
-	Whitelist = Whitelist or {ListEnabled = {"arrow", "snowball"}}
-	AlsoUse = AlsoUse or {Has = function() return false end}
-	Legit = Legit or {Enabled = false}
-	FireRate = FireRate or {Value = 0.05}
-	Mouse = Mouse or {Enabled = false}
-	AFKCheck = AFKCheck or {Enabled = false}
-	Attackable = Attackable or {Enabled = false}
-	Swing = Swing or {Enabled = false}
-	GUI = GUI or {Enabled = false}
-	Face = Face or {Enabled = false}
-	Animation = Animation or {Enabled = false}
-	AnimationMode = AnimationMode or {Value = "Default"}
-	AnimationSpeed = AnimationSpeed or {Value = 1}
-	AnimationTween = AnimationTween or {Enabled = false}
-	Limit = Limit or {Enabled = false}
-	LegitAura = LegitAura or {Enabled = false}
-	Targets = Targets or {Players = {Enabled = true}, NPCs = {Enabled = true}}
-	if not Targets.Players then Targets.Players = {Enabled = true} end
-	if not Targets.NPCs then Targets.NPCs = {Enabled = true} end
-
 	killauraReady = true
 end)
 
@@ -24030,28 +22960,7 @@ run(function()
 	local OnlyWhenLow
 	local LowHealth
 
-	local util = vape.Libraries and vape.Libraries.bedwarsutil
-	if type(util) ~= "table" then
-		util = {
-			Chest = {
-				Range = 20,
-				OwnFolder = function() return nil end,
-				InRange = function() return false end,
-				Observe = function(_, fn) if fn then pcall(fn) end end,
-				Give = function() return false end,
-				Take = function() return false end,
-				Entries = function() return {} end,
-			},
-			Shop = {
-				ChestScreenOpen = function() return false end,
-				BuyScreenOpen = function() return false end,
-			},
-			Health = { Current = function() return nil end },
-			Queue = { Await = function() return true end },
-			Studs = "studs",
-		}
-		warn("[elevate] bedwarsutil missing — AutoBank using stubs")
-	end
+	local util = vape.Libraries.bedwarsutil
 	local cooldowns = {}
 	local banked = 0
 
@@ -24173,8 +23082,8 @@ run(function()
 		Name = 'Chest range',
 		Min = 1,
 		Max = 30,
-		Default = (type(util)=='table' and util.Chest and util.Chest.Range) or 20,
-		Suffix = (type(util)=='table' and util.Studs) or 'studs',
+		Default = util.Chest.Range,
+		Suffix = util.Studs,
 		Tooltip = 'How close to your personal chest you need to be'
 	})
 	Withdraw = AutoBank:CreateToggle({
@@ -34396,7 +33305,7 @@ run(function()
 				local Changed = function()
 					if v:GetAttribute('HeldItem') then
 						repeat
-							__elevateSafeHandlerGet('DropDroneItem'):Fire('SendToServer', {
+							bedwars.Handler:Get('DropDroneItem'):Fire('SendToServer', {
 								direction = Vector3.new(1000, 10, 0),
 								position = v.PrimaryPart.Position
 							})
@@ -34410,7 +33319,7 @@ run(function()
 				return v
 			end
 		end
-		if getItem('drone') and __elevateSafeHandlerGet('FireGuidedProjectile'):Fire('CallServer', 'drone') then
+		if getItem('drone') and bedwars.Handler:Get('FireGuidedProjectile'):Fire('CallServer', 'drone') then
 			task.wait(0.1)
 			return getDrone()
 		end
@@ -34476,7 +33385,7 @@ run(function()
 								v.Velocity = Vector3.zero
 								v.CFrame = entitylib.character.RootPart.CFrame - Vector3.new(0, 4, 0)
 								task.spawn(function()
-									__elevateSafeHandlerGet('PickupItemDrop'):Fire('CallServerAsync', {
+									bedwars.Handler:Get('PickupItemDrop'):Fire('CallServerAsync', {
 										itemDrop = v
 									}):andThen(function(suc)
 										if suc and bedwars.SoundList then
@@ -56683,10 +55592,10 @@ run(function()
                 end
                 
                 local sendVal = Device.Value == 'SmartFridge' and 'SMART_FRIDGE' or (Device.Value == 'VR' and 'VR' or Device.Value:upper())
-                __elevateSafeHandlerGet('SendUserInputType'):Fire('SendToServer', {userInputType = sendVal})
+                bedwars.Handler:Get('SendUserInputType'):Fire('SendToServer', {userInputType = sendVal})
             else
                 bedwars.UserInputController.getUserInputType = old
-                __elevateSafeHandlerGet('SendUserInputType'):Fire('SendToServer', {userInputType = oldDevice})
+                bedwars.Handler:Get('SendUserInputType'):Fire('SendToServer', {userInputType = oldDevice})
                 old = nil
             end
         end,
@@ -56702,7 +55611,7 @@ run(function()
         Function = function(val)
             if DeviceSpoofer.Enabled then
                 local sendVal = val == 'SmartFridge' and 'SMART_FRIDGE' or (val == 'VR' and 'VR' or val:upper())
-                __elevateSafeHandlerGet('SendUserInputType'):Fire('SendToServer', {userInputType = sendVal})
+                bedwars.Handler:Get('SendUserInputType'):Fire('SendToServer', {userInputType = sendVal})
             end
         end
     })

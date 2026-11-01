@@ -7534,27 +7534,25 @@ run(function()
 		table.sort(sortlist)
 	end
 
-	-- Faster hitreg fallback (tighter spacing = more attacks / better vs dodge)
+	-- Used only when the real swordtiming library is missing (same constants as SilentAura).
 	local SwordTimingFallback = {
-		SafeSpacing = 0.275,
-		HighSpacing = 0.255,
-		HitFloor = 0.26,
-		GapFloor = 0.265,
-		ArrivalFloor = 0.24,
-		CooldownCorrection = (0.017999999225139618 / 10) + 0.018
+		SafeSpacing = 0.295,
+		HighSpacing = 0.285,
+		HitFloor = 0.292,
+		GapFloor = 0.2965,
+		ArrivalFloor = 0.274,
+		CooldownCorrection = (0.017999999225139618 / 10) + 0.013412
 	}
-	local WeaponSpacing = {[0.21] = 0.205, [0.25] = 0.225, [0.35] = 0.31, [0.4] = 0.31, [0.6] = 0.55}
+	local WeaponSpacing = {[0.21] = 0.229, [0.25] = 0.249, [0.35] = 0.345, [0.4] = 0.341, [0.6] = 0.63}
 	function SwordTimingFallback.Calculate(SwordSpeed, Fury, High, Budget)
 		local Stock = SwordSpeed == 0.3
 		local Normal = High and SwordTimingFallback.HighSpacing or SwordTimingFallback.SafeSpacing
-		local Spacing = Stock and Normal or WeaponSpacing[SwordSpeed] or SwordSpeed * 0.92
-		-- Prefer speed over waiting on rate-limit budget
-		local minBudget = math.min(Budget or 0.2, 0.18)
-		Spacing = math.max(Spacing * Fury, minBudget * 0.85)
+		local Spacing = Stock and Normal or WeaponSpacing[SwordSpeed] or SwordSpeed + 0.03
+		Spacing = math.max(Spacing * Fury, Budget or 0)
 		local Scale = Spacing / (Stock and Normal or SwordTimingFallback.SafeSpacing)
 		local Gap = (Scale < 1 and SwordTimingFallback.GapFloor or SwordTimingFallback.HitFloor) * Scale
 		if Stock and High then
-			Gap = math.max(Gap * 0.92, SwordTimingFallback.GapFloor * 0.95, minBudget * 0.8)
+			Gap = math.max(Gap, SwordTimingFallback.GapFloor, Budget or 0)
 		end
 		return Spacing, Scale, Gap, math.max(SwordSpeed * Fury - SwordTimingFallback.CooldownCorrection, 0), Stock
 	end
@@ -7568,9 +7566,7 @@ run(function()
 	local TargetInfo = targetinfo
 	local getTinkerMount = bedwars.getTinkerMount
 	local watchProjectile = bedwars.watchProjectile
-	-- Always use tuned fallback for faster hitreg (ignores slower library if present)
-	local SwordTiming = SwordTimingFallback
-	vape.Libraries.swordtiming = SwordTimingFallback
+	local SwordTiming = vape.Libraries.swordtiming or SwordTimingFallback
 	local Killaura
 	local Targets
 	local Sort
@@ -7627,24 +7623,25 @@ run(function()
 	local TransitSamples: {number} = {}
 	local TransitRecent: {number} = {}
 	local HitregTiming = {
-		Window = 6,
-		FloorWindow = 24,
-		ExcessCap = 0.18,
+		Window = 8,
+		FloorWindow = 32,
+		ExcessCap = 0.25,
 		Spread = 0,
-		Noise = 0.02,
+		Noise = 0.03,
 		Margin = 0,
 		AlignFrames = false,
 		MatchTransit = true,
 		Peak = 0,
 		PeakUntil = 0,
-		MarginHold = 1.2,
+		MarginHold = 1.5,
 		MinimumMargin = 0,
 		ColdMargin = 0,
 		BootSamples = 0,
-		FrameBootSamples = 1,
-		LatencyScale = 0.85,
-		RecoveryCap = 0.04,
-		RecoveryStep = 0.008
+		FrameBootSamples = 2,
+		LatencyScale = 1,
+		-- Soft recovery: cap ghost penalty so one miss doesn't stall the aura
+		RecoveryCap = 0.045,
+		RecoveryStep = 0.01
 	}
 	local function GetHitLifetime(): number
 		return math.max(2, LocalPlayer:GetNetworkPing() * 2 + 0.3, (ConfirmMin or 0) + HitregTiming.Spread + 0.5)
@@ -7658,20 +7655,19 @@ run(function()
 	local SwordSwingMiss = {FireServer = function() end}
 	local ProjectileRemote = bedwars.Handler:Get("ProjectileFire")
 	local FastHitPending, LastShot = nil, 0
-	local ArrivalFloor: number = SwordTiming.ArrivalFloor or 0.24
-	-- Lower HitBudget = higher attacks/sec (clamped against remote rate limit later)
-	local HitBudget, HitFloor, GapFloor = 0.17, SwordTiming.HitFloor or 0.26, SwordTiming.GapFloor or 0.265
-	local CleanFloor: number = SwordTiming.HighSpacing or 0.255
-	local TargetLag: number = 0.08
-	local SelfLag: number = 0.06
-	local SelfLagLow: number = 0.045
-	local SelfLagHigh: number = 0.08
-	local ClaimLag: number = 0.035
-	local ServerReach: number = 3.8
-	local RangeMargin: number = 0.25
-	local ClaimMargin: number = 0.75
-	local LagCap: number = 10
-	local TrailLength: number = 0.25
+	local ArrivalFloor: number = SwordTiming.ArrivalFloor
+	local HitBudget, HitFloor, GapFloor = 0.2, SwordTiming.HitFloor, SwordTiming.GapFloor
+	local CleanFloor: number = SwordTiming.HighSpacing
+	local TargetLag: number = 0.12
+	local SelfLag: number = 0.09
+	local SelfLagLow: number = 0.07
+	local SelfLagHigh: number = 0.11
+	local ClaimLag: number = 0.05
+	local ServerReach: number = 3.6
+	local RangeMargin: number = 0.4
+	local ClaimMargin: number = 1
+	local LagCap: number = 8
+	local TrailLength: number = 0.3
 	local TrailTimes: {number} = {}
 	local TrailPositions: {Vector3} = {}
 	local SelfReference = {Low = Vector3.zero, High = Vector3.zero, Claim = Vector3.zero}
@@ -7797,15 +7793,7 @@ run(function()
 	task.spawn(function()
 		AttackRemote = bedwars.Handler:Get("SwordHit")
 		SwordSwingMiss = bedwars.Handler:Get("SwordSwingMiss")
-		local ok, rate = pcall(function()
-			return AttackRemote:GetRateLimit()
-		end)
-		-- Clamp so rate-limit doesn't force slow 0.28+ spacing
-		if ok and type(rate) == "number" and rate > 0 then
-			HitBudget = math.clamp(60 / rate, 0.155, 0.20)
-		else
-			HitBudget = 0.17
-		end
+		HitBudget = 60 / AttackRemote:GetRateLimit()
 	end)
 	
 	local FireRates: {[string]: number} = {}
@@ -8502,7 +8490,8 @@ run(function()
 	
 						do
 							local Ghosted: boolean = false
-							local Recovery: boolean = HighHitreg.Enabled and Hitreg.Value ~= "Burst" and SwordMeta and SwordMeta.sword and SwordMeta.sword.attackSpeed == 0.3 and HitregTiming.RecoveryCap > 0 or false
+							-- Always use soft recovery path so GhostDelay cannot climb into stutter range
+							local Recovery: boolean = true
 							if #Attacked == 0 then
 								table.clear(GhostPending)
 							end
@@ -8513,15 +8502,19 @@ run(function()
 	
 							if Ghosted then
 								GhostCount = (tick() < GhostWindow and GhostCount or 0) + 1
-								GhostWindow = tick() + 5
-								if GhostCount > (Recovery and 0 or 1) and tick() > GhostStep then
-									GhostStep = tick() + 1
-									GhostHold = tick() + (Recovery and HitregTiming.MarginHold or HighHitreg.Enabled and 2 or 10)
-									GhostDelay = math.min(GhostDelay + (Recovery and HitregTiming.RecoveryStep or HighHitreg.Enabled and 0.001 or 0.003), Recovery and HitregTiming.RecoveryCap or HighHitreg.Enabled and (10 / 34 - CleanFloor) or 0.1)
+								GhostWindow = tick() + 3
+								-- Need more consecutive ghosts before adding delay (was 1)
+								if GhostCount > 2 and tick() > GhostStep then
+									GhostStep = tick() + 1.25
+									GhostHold = tick() + HitregTiming.MarginHold
+									local step = HitregTiming.RecoveryStep or 0.01
+									local cap = HitregTiming.RecoveryCap or 0.045
+									GhostDelay = math.min(GhostDelay + step, cap)
 								end
 							elseif GhostDelay > 0 and tick() > GhostHold then
-								GhostHold = tick() + (Recovery and HitregTiming.MarginHold or HighHitreg.Enabled and 2 or 10)
-								GhostDelay = math.max(GhostDelay - (HighHitreg.Enabled and 0.001 or 0.003), 0)
+								-- Recover faster than we punish
+								GhostHold = tick() + 0.75
+								GhostDelay = math.max(GhostDelay - 0.004, 0)
 							end
 						end
 	

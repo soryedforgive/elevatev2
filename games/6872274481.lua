@@ -133,6 +133,113 @@ local tween = vape.Libraries.tween
 local color = vape.Libraries.color
 local whitelist = { get = function() return nil, true end, tag = function() return '' end, customtags = {} }
 local prediction = vape.Libraries.prediction
+
+	local function __elevateEnsureModuleAPI(mod)
+		if type(mod) ~= "table" or mod.__elevateAPI then return mod end
+		mod.__elevateAPI = true
+		if type(mod.CreateGroup) ~= "function" and type(mod.CreateToggle) == "function" then
+			mod.CreateGroup = function(self, opts)
+				opts = opts or {}
+				local g = self:CreateToggle({
+					Name = opts.Name,
+					Default = opts.Default,
+					Tooltip = opts.Tooltip,
+					Function = opts.Function,
+				})
+				-- children bind to parent module (never recurse CreateGroup on g)
+				g.CreateToggle = function(_, o)
+					o = o or {}
+					o.Darker = true
+					return self:CreateToggle(o)
+				end
+				g.CreateSlider = function(_, o)
+					o = o or {}
+					o.Darker = true
+					return self:CreateSlider(o)
+				end
+				g.CreateDropdown = function(_, o)
+					o = o or {}
+					o.Darker = true
+					return self:CreateDropdown(o)
+				end
+				g.CreateTextList = function(_, o)
+					o = o or {}
+					o.Darker = true
+					if type(self.CreateTextList) == "function" then return self:CreateTextList(o) end
+					return { ListEnabled = o.Default or {}, Object = {Visible = true}, Name = o.Name }
+				end
+				g.CreateMultiDropdown = function(_, o)
+					o = o or {}
+					o.Darker = true
+					if type(self.CreateMultiDropdown) == "function" then return self:CreateMultiDropdown(o) end
+					local en = {}
+					for _, v in ipairs(o.Default or {}) do en[v] = true end
+					return { ListEnabled = o.Default or {}, Has = function(_, n) return en[n] == true end, Object = {Visible = true} }
+				end
+				g.CreateTextBox = function(_, o)
+					o = o or {}
+					if type(self.CreateTextBox) == "function" then return self:CreateTextBox(o) end
+					return { Value = o.Default or "", Object = {Visible = true}, Name = o.Name }
+				end
+				g.CreateTwoSlider = function(_, o)
+					o = o or {}
+					if type(self.CreateTwoSlider) == "function" then return self:CreateTwoSlider(o) end
+					local s = self:CreateSlider({
+						Name = o.Name or "Range",
+						Min = o.Min or 0,
+						Max = o.Max or 1000,
+						Default = o.DefaultMax or 0,
+						Tooltip = o.Tooltip,
+						Darker = true,
+					})
+					s.MinValue = o.DefaultMin or 0
+					s.MaxValue = s.Value
+					return s
+				end
+				g.CreateColorSlider = function(_, o)
+					if type(self.CreateColorSlider) == "function" then return self:CreateColorSlider(o) end
+					return { Hue = 0, Sat = 1, Value = 1, Opacity = 1, Object = {Visible = true} }
+				end
+				return g
+			end
+		end
+		if type(mod.CreateMultiDropdown) ~= "function" then
+			mod.CreateMultiDropdown = function(_, o)
+				o = o or {}
+				local en = {}
+				for _, v in ipairs(o.Default or {}) do en[v] = true end
+				return { ListEnabled = o.Default or {}, Has = function(_, n) return en[n] == true end, Object = {Visible = true} }
+			end
+		end
+		if type(mod.CreateTextBox) ~= "function" then
+			mod.CreateTextBox = function(_, o)
+				o = o or {}
+				return { Value = o.Default or "", Object = {Visible = true}, Name = o.Name }
+			end
+		end
+		if type(mod.CreateTwoSlider) ~= "function" then
+			mod.CreateTwoSlider = function(self, o)
+				o = o or {}
+				if type(self.CreateSlider) == "function" then
+					local s = self:CreateSlider({
+						Name = o.Name or "Range", Min = o.Min or 0, Max = o.Max or 1000,
+						Default = o.DefaultMax or 0, Tooltip = o.Tooltip,
+					})
+					s.MinValue, s.MaxValue = o.DefaultMin or 0, s.Value
+					return s
+				end
+				return { MinValue = 0, MaxValue = 0, Value = 0, Object = {Visible = true} }
+			end
+		end
+		if type(mod.CreateTextList) ~= "function" then
+			mod.CreateTextList = function(_, o)
+				o = o or {}
+				return { ListEnabled = o.Default or {}, Object = {Visible = true}, Name = o.Name }
+			end
+		end
+		return mod
+	end
+
 local getfontsize = vape.Libraries.getfontsize
 local getcustomasset = vape.Libraries.getcustomasset
 
@@ -7878,7 +7985,7 @@ run(function()
 					end
 				end))
 	
-				if Animation.Enabled then
+				if Animation and (Animation and Animation.Enabled) then
 					local FakeKnit = {
 						Controllers = {
 							ViewmodelController = {
@@ -7886,7 +7993,7 @@ run(function()
 									return bedwars.ViewmodelController:isVisible()
 								end,
 								playAnimation = function(...)
-									if LegitAura.Enabled or not store.attacking or not (ArmWrist and ArmWrist.Parent) then
+									if (LegitAura and LegitAura.Enabled) or not store.attacking or not (ArmWrist and ArmWrist.Parent) then
 										bedwars.ViewmodelController:playAnimation(select(2, ...))
 									end
 								end
@@ -7942,7 +8049,7 @@ run(function()
 							if not Started then
 								task.wait()
 							end
-						until (not Killaura.Enabled) or (not Animation.Enabled) or Session ~= Current
+						until (not Killaura.Enabled) or (not (Animation and Animation.Enabled)) or Session ~= Current
 					end)
 				end
 	
@@ -7995,12 +8102,12 @@ run(function()
 						end
 	
 						if not Blocked then
-							Sword = Limit.Enabled and store.hand or store.tools.sword
+							Sword = (Limit and Limit.Enabled) and store.hand or store.tools.sword
 							if not Sword or not Sword.tool then
 								Sword = nil
-							elseif Limit.Enabled and (store.hand.toolType ~= "sword" or bedwars.DaoController.chargingMaid) then
+							elseif (Limit and Limit.Enabled) and (store.hand.toolType ~= "sword" or bedwars.DaoController.chargingMaid) then
 								Sword = nil
-							elseif LegitAura.Enabled and (tick() - bedwars.SwordController.lastSwing) > 0.2 then
+							elseif (LegitAura and LegitAura.Enabled) and (tick() - bedwars.SwordController.lastSwing) > 0.2 then
 								Sword = nil
 							else
 								SwordMeta = bedwars.ItemMeta[Sword.tool.Name]
@@ -8113,7 +8220,7 @@ run(function()
 									if not store.attacking then
 										store.attacking = true
 										store.KillauraTarget = v
-										if not Swing.Enabled and AnimDelay < tick() and not LegitAura.Enabled then
+										if not Swing.Enabled and AnimDelay < tick() and not (LegitAura and LegitAura.Enabled) then
 											local SwingDelay: number = math.max(SwingTime:GetRandomValue(), 0.09)
 											AnimDelay = tick() + SwingDelay
 											Swung = true
@@ -8245,7 +8352,7 @@ run(function()
 													selfPosition = {value = HitPosition}
 												}
 											})
-											if FastHits.Enabled and not FastHitPending and tick() > LastShot then
+											if (FastHits and FastHits.Enabled) and not FastHitPending and tick() > LastShot then
 												local Projectiles = GetShots()
 												if #Projectiles > 0 then
 													ProjectileIndex += 1
@@ -8361,7 +8468,7 @@ run(function()
 	
 						if #Attacked > 0 then
 							ContinueUntil = tick() + (ContinueSwing:GetRandomValue() / 1000)
-						elseif Sword and SwordMeta and tick() < ContinueUntil and AnimDelay < tick() and not Swing.Enabled and not LegitAura.Enabled then
+						elseif Sword and SwordMeta and tick() < ContinueUntil and AnimDelay < tick() and not Swing.Enabled and not (LegitAura and LegitAura.Enabled) then
 							local SwingDelay: number = math.max(SwingTime:GetRandomValue(), 0.11)
 							AnimDelay = tick() + SwingDelay
 							local Mount: Model? = getTinkerMount()
@@ -8552,6 +8659,7 @@ run(function()
 		Name = "Target Mode",
 		List = Methods
 	})
+	__elevateEnsureModuleAPI(Killaura)
 	FastHits = Killaura:CreateGroup({
 		Name = "Fast Hits",
 		Default = false,
@@ -22753,7 +22861,25 @@ run(function()
 	local OnlyWhenLow
 	local LowHealth
 
-	local util = vape.Libraries.bedwarsutil
+	local util = (vape.Libraries and vape.Libraries.bedwarsutil) or {}
+	if type(util) ~= "table" then util = {} end
+	if type(util.Chest) ~= "table" then
+		util.Chest = {
+			Range = 20,
+			OwnFolder = function() return nil end,
+			InRange = function() return false end,
+			Observe = function() end,
+			Give = function() return false end,
+			Take = function() end,
+			Entries = function() return {} end,
+		}
+	end
+	if type(util.Studs) ~= "function" then
+		util.Studs = function(val) return val == 1 and "stud" or "studs" end
+	end
+	if type(util.Shop) ~= "table" then
+		util.Shop = { ChestScreenOpen = function() return false end }
+	end
 	local cooldowns = {}
 	local banked = 0
 
@@ -22884,6 +23010,7 @@ run(function()
 		Default = true,
 		Tooltip = 'Takes items out of the chest while a shop is open'
 	})
+	__elevateEnsureModuleAPI(AutoBank)
 	OnlyWhenLow = AutoBank:CreateGroup({
 		Name = 'Only when low',
 		Tooltip = 'Only banks once your health drops to Low HP'
@@ -55015,6 +55142,17 @@ end)
 run(function()
 	local MetalDetectorSpy
 	local TeamCheckToggle
+
+	if not vape.Categories.KitSpy then
+		vape.Categories.KitSpy = vape.Categories.Render or vape.Categories.Kits or vape.Categories.Blatant or vape.Categories.Utility
+		if not vape.Categories.KitSpy then
+			vape.Categories.KitSpy = {
+				CreateModule = function(_, opts)
+					return { Enabled = false, CreateToggle = function() return {Enabled=false} end, CreateSlider = function() return {Value=0} end, Clean = function() end, Toggle = function() end }
+				end
+			}
+		end
+	end
 	
 	MetalDetectorSpy = vape.Categories.KitSpy:CreateModule({
 		Name = 'MetalDetectorSpy',
@@ -56990,7 +57128,12 @@ run(function()
     local NoSlow
     local StackMode
     
-    local Legit = (bedwars.DragonSlayerController and bedwars.DragonSlayerController.hasEligiblePunchTarget and getFunctionRange(bedwars.DragonSlayerController.hasEligiblePunchTarget)) or 14.4
+    local Legit = 14.4
+    pcall(function()
+        if type(getFunctionRange) == "function" and bedwars.DragonSlayerController and bedwars.DragonSlayerController.hasEligiblePunchTarget then
+            Legit = getFunctionRange(bedwars.DragonSlayerController.hasEligiblePunchTarget) or 14.4
+        end
+    end)
     local modifier, old
     local noSlowUntil = 0
     
@@ -66086,6 +66229,7 @@ run(function()
 		Tooltip = "Which loop drives playback movement",
 	})
 
+	__elevateEnsureModuleAPI(replayModule)
 	local recordList = replayModule:CreateMultiDropdown({
 		Name = "Record",
 		List = {"Entities", "Animations", "Armor", "Damage effects", "Sounds"},

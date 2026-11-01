@@ -7435,6 +7435,183 @@ local Attacking
 
 
 run(function()
+	-- Elevate compat: this base has no bedwars.Handler, swordtiming, StatusEffectUtil, etc.
+	local bedwars = setmetatable({}, {__index = bedwars})
+	local function getNet(Name)
+		local Ok, Object = pcall(function()
+			return bedwars.Client:Get(Name)
+		end)
+		return Ok and Object or nil
+	end
+	local AttackObject
+	bedwars.Handler = {
+		Get = function(_, Name)
+			if Name == "SwordHit" then
+				return {
+					GetRateLimit = function()
+						return 210
+					end,
+					Fire = function(_, _, Payload)
+						AttackObject = AttackObject or getNet(remotes.AttackEntity)
+						if not AttackObject then
+							return
+						end
+						local Remote = AttackObject.instance
+						if Remote then
+							Remote:FireServer(Payload)
+							return
+						end
+						store.kaSending = true
+						pcall(AttackObject.SendToServer, AttackObject, Payload)
+						store.kaSending = false
+					end
+				}
+			elseif Name == "ProjectileFire" then
+				return {
+					Fire = function(_, _, ...)
+						local Object = getNet("ProjectileFire")
+						if not Object then
+							return
+						end
+						local Ok, Response = pcall(Object.CallServer, Object, ...)
+						return Ok and Response or nil
+					end
+				}
+			elseif Name == "SwordSwingMiss" then
+				return {
+					Fire = function(_, _, Payload)
+						local Object = getNet("SwordSwingMiss")
+						if Object and Object.SendToServer then
+							pcall(Object.SendToServer, Object, Payload)
+						end
+					end
+				}
+			end
+			return {
+				Fire = function() end,
+				GetRateLimit = function()
+					return 300
+				end
+			}
+		end
+	}
+	bedwars.getTinkerMount = function()
+		return nil
+	end
+	bedwars.watchProjectile = function() end
+	bedwars.getShotData = function()
+		return {drawDurationSeconds = 1}
+	end
+	bedwars.swingEffect = function(SwordMeta)
+		local Controller = bedwars.SwordController
+		local Meta = getmetatable(Controller)
+		local Base = Meta and type(Meta.__index) == "table" and Meta.__index.playSwordEffect or Controller.playSwordEffect
+		pcall(Base, Controller, SwordMeta, false)
+	end
+	bedwars.StatusEffectUtil = {
+		isActive = function(_, Character, Effect)
+			if not Character then
+				return false
+			end
+			local Value = Character:GetAttribute("StatusEffect_" .. Effect)
+			return Value ~= nil and Value ~= false
+		end
+	}
+	bedwars.ScytheController = bedwars.ScytheController or {playLocalAnimation = function() end}
+
+	local isAfk = isAfk or function()
+		return false
+	end
+	local getProjectiles = getProjectiles or function()
+		return {}
+	end
+	local sortlist = sortlist
+	if type(sortlist) ~= "table" then
+		sortlist = {}
+		for Name in sortmethods do
+			table.insert(sortlist, Name)
+		end
+		table.sort(sortlist)
+	end
+
+	-- Used only when the real swordtiming library is missing (same constants as SilentAura).
+	local SwordTimingFallback = {
+		SafeSpacing = 0.295,
+		HighSpacing = 0.285,
+		HitFloor = 0.292,
+		GapFloor = 0.2965,
+		ArrivalFloor = 0.274,
+		CooldownCorrection = (0.017999999225139618 / 10) + 0.013412
+	}
+	local WeaponSpacing = {[0.21] = 0.229, [0.25] = 0.249, [0.35] = 0.345, [0.4] = 0.341, [0.6] = 0.63}
+	function SwordTimingFallback.Calculate(SwordSpeed, Fury, High, Budget)
+		local Stock = SwordSpeed == 0.3
+		local Normal = High and SwordTimingFallback.HighSpacing or SwordTimingFallback.SafeSpacing
+		local Spacing = Stock and Normal or WeaponSpacing[SwordSpeed] or SwordSpeed + 0.03
+		Spacing = math.max(Spacing * Fury, Budget or 0)
+		local Scale = Spacing / (Stock and Normal or SwordTimingFallback.SafeSpacing)
+		local Gap = (Scale < 1 and SwordTimingFallback.GapFloor or SwordTimingFallback.HitFloor) * Scale
+		if Stock and High then
+			Gap = math.max(Gap, SwordTimingFallback.GapFloor, Budget or 0)
+		end
+		return Spacing, Scale, Gap, math.max(SwordSpeed * Fury - SwordTimingFallback.CooldownCorrection, 0), Stock
+	end
+	-- Libraries the killaura reads from vape.Libraries.
+	vape.Libraries.swordtiming = vape.Libraries.swordtiming or SwordTimingFallback
+	vape.Libraries.auraanims = vape.Libraries.auraanims or {
+		Normal = {
+			{CFrame = CFrame.Angles(math.rad(-30), 0, 0), Time = 0.1},
+			{CFrame = CFrame.new(), Time = 0.1}
+		}
+	}
+	store.ping = store.ping or {total = 0}
+
+	-- Adds the UI methods this UI lacks and holds toggles until every option exists.
+	local killauraReady = false
+	local blatant = vape.Categories.Blatant
+	local rawCreateModule = blatant.CreateModule
+	blatant.CreateModule = function(self, options)
+		blatant.CreateModule = rawCreateModule
+		local module
+		local original = options.Function
+		if original then
+			options.Function = function(state, ...)
+				local waited = 0
+				while state and not killauraReady and waited < 15 do
+					waited += task.wait()
+				end
+				if state and (not killauraReady or not module.Enabled) then
+					return
+				end
+				return original(state, ...)
+			end
+		end
+		module = rawCreateModule(self, options)
+		if not module.CreateGroup then
+			module.CreateGroup = function(parent, groupOptions)
+				local toggle = parent:CreateToggle({Name = groupOptions.Name, Default = groupOptions.Default, Function = groupOptions.Function, Tooltip = groupOptions.Tooltip})
+				return setmetatable({}, {
+					__index = function(_, key)
+						if type(key) == "string" and key:sub(1, 6) == "Create" then
+							return function(_, childOptions) return parent[key](parent, childOptions) end
+						end
+						return toggle[key]
+					end
+				})
+			end
+		end
+		if not module.CreateMultiDropdown then
+			module.CreateMultiDropdown = function(parent, dropdownOptions)
+				local toggles = {}
+				for _, name in dropdownOptions.List do
+					toggles[name] = parent:CreateToggle({Name = name, Darker = true})
+				end
+				return {Has = function(_, name) return toggles[name] ~= nil and toggles[name].Enabled end}
+			end
+		end
+		return module
+	end
+
 	local LocalPlayer = lplr
 	local Entity = entitylib
 	local Camera = gameCamera
@@ -7490,7 +7667,7 @@ run(function()
 	local Particles, Boxes = {}, {}
 	local HitRandom: Random = Random.new()
 	local ContinueUntil: number = 0
-	local SwingGap: number = 0.11
+	local SwingGap: number = 0.05
 	local LastEffect, LastAttack, OldSwing, SwingHook = 0, 0, nil, nil
 	local EffectSwing: number = 0
 	local Session = nil
@@ -7503,10 +7680,10 @@ run(function()
 	local TransitRecent: {number} = {}
 	local HitregTiming = {
 		Window = 8,
-		FloorWindow = 32,
-		ExcessCap = 0.25,
+		FloorWindow = 30,
+		ExcessCap = 0.2,
 		Spread = 0,
-		Noise = 0.03,
+		Noise = 0.01,
 		Margin = 0,
 		AlignFrames = false,
 		MatchTransit = true,

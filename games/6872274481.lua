@@ -7666,7 +7666,7 @@ run(function()
 
 		local n4 = position + tbl3.offset
 		local n5 = (n4 - tbl3.at) * vector
-		local n6 = getSpeed() * math.max(arg2, 0.0041666666666666666)
+		local n6 = getSpeed() * math.max(arg2, 0.00411111111111)
 		local n7
 
 		if not (n6 < n5.Magnitude) then
@@ -64623,9 +64623,9 @@ run(function()
 	local ProjectileRemote = makeRemote("ProjectileFire", "FireProjectile", true)
 	local FastHitPending, LastShot = nil, 0
 	local ArrivalFloor: number = SwordTiming.ArrivalFloor
-	local HitBudget, HitFloor, GapFloor = 0.2, SwordTiming.HitFloor, SwordTiming.GapFloor
+	local HitBudget, HitFloor, GapFloor = 0, SwordTiming.HitFloor, SwordTiming.GapFloor
 	local CleanFloor: number = SwordTiming.HighSpacing
-	local TargetLag: number = 0.12
+	local TargetLag: number = 0.1
 	local SelfLag: number = 0.09
 	local SelfLagLow: number = 0.07
 	local SelfLagHigh: number = 0.11
